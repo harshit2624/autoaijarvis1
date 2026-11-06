@@ -13642,9 +13642,20 @@
     const [data, setData] = React.useState(null);
     const [campaignData, setCampaignData] = React.useState(null);
     const [funnelData, setFunnelData] = React.useState(null);
+    const [pricing, setPricing] = React.useState(null);
+    const [pricingDraft, setPricingDraft] = React.useState({ marketing_rate: '', utility_rate: '' });
+    const [pricingSaving, setPricingSaving] = React.useState(false);
     const [loading, setLoading] = React.useState(true);
     const [search, setSearch] = React.useState('');
     const [intentFilter, setIntentFilter] = React.useState('all');
+
+    const savePricing = React.useCallback(() => {
+      setPricingSaving(true);
+      fetch(`${API}/admin/wa-marketing/pricing-settings`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ marketing_rate: pricingDraft.marketing_rate, utility_rate: pricingDraft.utility_rate }),
+      }).then(r=>r.json()).then(d=>{ if (!d.error) setPricing(d); load(); }).finally(()=>setPricingSaving(false));
+    }, [pricingDraft, token]);
 
     const load = React.useCallback(() => {
       setLoading(true);
@@ -13652,7 +13663,13 @@
         fetch(`${API}/admin/wa-marketing/overview?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
         fetch(`${API}/admin/wa-marketing/campaigns?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
         fetch(`${API}/admin/wa-marketing/campaign-funnel?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
-      ]).then(([d,cd,fd]) => { if (d && !d.error) setData(d); if (cd && !cd.error) setCampaignData(cd); if (fd && !fd.error) setFunnelData(fd); }).finally(()=>setLoading(false));
+        fetch(`${API}/admin/wa-marketing/pricing-settings`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
+      ]).then(([d,cd,fd,pd]) => {
+        if (d && !d.error) setData(d);
+        if (cd && !cd.error) setCampaignData(cd);
+        if (fd && !fd.error) setFunnelData(fd);
+        if (pd && !pd.error) { setPricing(pd); setPricingDraft({ marketing_rate: pd.marketing_rate || '', utility_rate: pd.utility_rate || '' }); }
+      }).finally(()=>setLoading(false));
     }, [days, token]);
     React.useEffect(load, [load]);
 
@@ -13693,11 +13710,38 @@
               <span className="card-sub">Every WA marketing send, grouped — sent / delivered / read / converted / revenue</span>
             </div>
             <div style={{padding:16}}>
+              {/* Meta's real India rate isn't one published number — it's a
+                  volume-tiered CSV that changes on its own schedule, varies
+                  by category, and most accounts also carry a BSP markup +
+                  18% GST on top that Meta's own figure never includes. No
+                  API returns real per-message cost for this account either.
+                  Rather than hardcode a number that's wrong the moment it's
+                  checked against a real bill, Spend/ROAS are computed from
+                  whatever rate you enter here — read it off your actual
+                  Meta/BSP invoice. */}
+              <div style={{display:'flex',alignItems:'flex-end',gap:10,flexWrap:'wrap',marginBottom:16,padding:'10px 12px',background:'var(--bg-card2)',borderRadius:8,border:'1px solid var(--border)'}}>
+                <div style={{fontSize:10.5,color:'var(--text-muted)',maxWidth:260,lineHeight:1.5}}>
+                  <b style={{color:'var(--text-dim)'}}>Per-message rate (₹)</b><br/>
+                  Meta's rate isn't a single public number — enter yours from your actual Meta/BSP invoice to get real Spend &amp; ROAS below.
+                </div>
+                <div>
+                  <label style={{display:'block',fontSize:9.5,color:'var(--text-muted)',marginBottom:3,textTransform:'uppercase'}}>Marketing</label>
+                  <input type="number" step="0.01" value={pricingDraft.marketing_rate} onChange={e=>setPricingDraft(p=>({...p,marketing_rate:e.target.value}))} style={{width:90,fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text)',padding:'6px 8px'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',fontSize:9.5,color:'var(--text-muted)',marginBottom:3,textTransform:'uppercase'}}>Utility</label>
+                  <input type="number" step="0.01" value={pricingDraft.utility_rate} onChange={e=>setPricingDraft(p=>({...p,utility_rate:e.target.value}))} style={{width:90,fontSize:12,background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text)',padding:'6px 8px'}}/>
+                </div>
+                <button onClick={savePricing} disabled={pricingSaving} style={{fontSize:11,fontWeight:600,padding:'7px 14px',borderRadius:6,border:'1px solid var(--indigo)',background:'var(--indigo)',color:'#fff',cursor:'pointer'}}>{pricingSaving?'Saving…':'Save Rate'}</button>
+                {pricing && pricing.updated_at && <span style={{fontSize:10,color:'var(--text-muted)'}}>last set {waTimeAgo(pricing.updated_at)}</span>}
+              </div>
               <div className="stats-grid" style={{marginBottom:16}}>
                 <StatCard color="indigo" icon="→" label="Total Sent" value={campaignData.totals.sent.toLocaleString()}/>
                 <StatCard color="cyan" icon="👁" label="Total Read" value={campaignData.totals.read.toLocaleString()} sub={campaignData.totals.sent?`${Math.round(100*campaignData.totals.read/campaignData.totals.sent)}% read rate`:''}/>
                 <StatCard color="green" icon="✓" label="Converted" value={campaignData.totals.converted.toLocaleString()} sub={campaignData.totals.sent?`${Math.round(100*campaignData.totals.converted/campaignData.totals.sent)}% conversion`:''}/>
                 <StatCard color="purple" icon="₹" label="Revenue Attributed" value={waFmtMoney(campaignData.totals.revenue)} sub="within 7-day window per send"/>
+                <StatCard color="yellow" icon="₹" label="Spend (est.)" value={campaignData.pricing_configured ? waFmtMoney(campaignData.totals.spend) : '—'} sub={campaignData.pricing_configured ? 'delivered marketing sends × your rate' : 'enter a rate above'}/>
+                <StatCard color="purple" icon="⚖" label="ROAS" value={campaignData.totals.roas!=null ? `${campaignData.totals.roas}x` : '—'} sub="revenue ÷ spend"/>
               </div>
               <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11.5}}>
@@ -13711,6 +13755,8 @@
                       <th style={{padding:'6px 8px',fontWeight:500}}>Conv. Rate</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Avg Order</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Revenue</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Spend</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>ROAS</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Last Sent</th>
                     </tr>
                   </thead>
@@ -13739,10 +13785,12 @@
                             <span style={{color:'var(--text)',fontWeight:700}}>{waFmtMoney(c.revenue)}</span>
                           </div>
                         </td>
+                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{campaignData.pricing_configured ? waFmtMoney(c.spend) : '—'}</td>
+                        <td style={{padding:'9px 8px',fontWeight:700,color:c.roas==null?'var(--text-muted)':c.roas>=3?'var(--green)':c.roas>=1?'var(--yellow)':'var(--red)'}}>{c.roas!=null ? `${c.roas}x` : '—'}</td>
                         <td style={{padding:'9px 8px',color:'var(--text-muted)',fontSize:10.5}}>{waTimeAgo(c.last_sent_at)}</td>
                       </tr>
                     ))}
-                    {!campaignData.campaigns.length && <tr><td colSpan="9" style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}>No marketing sends in this range yet</td></tr>}
+                    {!campaignData.campaigns.length && <tr><td colSpan="11" style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}>No marketing sends in this range yet</td></tr>}
                   </tbody>
                 </table>
               </div>

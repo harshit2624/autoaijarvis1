@@ -30781,40 +30781,86 @@ setInterval(markWASendConversions, 15 * 60 * 1000);
 // campaign. Pulls straight from wa_send_log (pre-attributed by the cron
 // above) — covers abandoned-cart touches, FLAT500 win-back, and any
 // future marketing template automatically, no per-campaign wiring needed.
+// ── WA per-message pricing — admin-entered, never guessed ──────────────────
+// Meta's actual India rate isn't a single published number: it's a
+// downloadable, volume-tiered CSV, varies by category, changes on its own
+// schedule (next update already announced for Oct 2026), and most accounts
+// also have a BSP markup + 18% GST on top that Meta's own number doesn't
+// include at all. There's no API that returns real per-message cost for
+// this account either (Graph API's conversation_analytics edge returns
+// empty — that's the OLD conversation-based billing model Meta moved off
+// of). Rather than hardcode a number that's wrong the moment it's checked
+// against a real invoice, Spend/ROAS are computed from whatever rate the
+// admin enters here (read off their actual Meta/BSP bill) — defaults to 0
+// (shows as "—", not a fabricated ₹0 spend) until set.
+async function getWAPricingSettings() {
+  const row = await mdb.collection('wa_pricing_settings').findOne({ _id: 'main' });
+  return { marketing_rate: row?.marketing_rate ?? 0, utility_rate: row?.utility_rate ?? 0, updated_at: row?.updated_at || null };
+}
+app.get('/admin/wa-marketing/pricing-settings', adminAuth, async (req, res) => {
+  try { res.json(await getWAPricingSettings()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.put('/admin/wa-marketing/pricing-settings', adminAuth, async (req, res) => {
+  try {
+    const { marketing_rate, utility_rate } = req.body || {};
+    await mdb.collection('wa_pricing_settings').updateOne(
+      { _id: 'main' },
+      { $set: { marketing_rate: Number(marketing_rate) || 0, utility_rate: Number(utility_rate) || 0, updated_at: new Date().toISOString(), updated_by: req.staffUsername || 'admin' } },
+      { upsert: true }
+    );
+    res.json(await getWAPricingSettings());
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
   try {
     const days = Math.min(parseInt(req.query.days) || 30, 180);
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const pricing = await getWAPricingSettings();
     const rows = await mdb.collection('wa_send_log').find(
       { kind: 'template', name: { $in: WA_CAMPAIGN_TEMPLATE_NAMES }, sent_at: { $gte: cutoff } },
-      { projection: { name: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, sent_at: 1 } }
+      { projection: { name: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, sent_at: 1, category: 1 } }
     ).toArray();
 
     const byName = {};
     for (const r of rows) {
-      if (!byName[r.name]) byName[r.name] = { name: r.name, sent: 0, delivered: 0, read: 0, failed: 0, converted: 0, revenue: 0, last_sent_at: r.sent_at };
+      if (!byName[r.name]) byName[r.name] = { name: r.name, sent: 0, delivered: 0, read: 0, failed: 0, converted: 0, revenue: 0, billable_sent: 0, last_sent_at: r.sent_at };
       const c = byName[r.name];
       c.sent++;
       if (r.status === 'failed') c.failed++;
-      if (['delivered', 'read'].includes(r.delivery_status)) c.delivered++;
+      // Meta only bills a marketing template on actual DELIVERY to the
+      // recipient's device — a send the API accepted but that never
+      // delivered (invalid number, blocked, device unreachable, etc.) is
+      // never charged. Billable count must track delivery_status, not
+      // merely "the send API call didn't fail". `category` defaults to
+      // marketing since every WA_CAMPAIGN_TEMPLATE_NAMES template
+      // currently is one (utility_rate stays ready for if/when a utility-
+      // category campaign gets added here).
+      if (['delivered', 'read'].includes(r.delivery_status)) { c.delivered++; c.billable_sent++; }
       if (r.delivery_status === 'read') c.read++;
       if (r.converted) { c.converted++; c.revenue += (r.converted_amount || 0); }
       if (r.sent_at > c.last_sent_at) c.last_sent_at = r.sent_at;
     }
-    const campaigns = Object.values(byName).map(c => ({
-      ...c,
-      delivered_rate: c.sent ? +(100 * c.delivered / c.sent).toFixed(1) : 0,
-      read_rate: c.sent ? +(100 * c.read / c.sent).toFixed(1) : 0,
-      conversion_rate: c.sent ? +(100 * c.converted / c.sent).toFixed(1) : 0,
-      avg_order: c.converted ? +(c.revenue / c.converted).toFixed(0) : 0,
-    })).sort((a, b) => b.revenue - a.revenue);
+    const campaigns = Object.values(byName).map(c => {
+      const spend = c.billable_sent * (pricing.marketing_rate || 0);
+      return {
+        ...c,
+        delivered_rate: c.sent ? +(100 * c.delivered / c.sent).toFixed(1) : 0,
+        read_rate: c.sent ? +(100 * c.read / c.sent).toFixed(1) : 0,
+        conversion_rate: c.sent ? +(100 * c.converted / c.sent).toFixed(1) : 0,
+        avg_order: c.converted ? +(c.revenue / c.converted).toFixed(0) : 0,
+        spend: +spend.toFixed(2),
+        roas: (pricing.marketing_rate && spend > 0) ? +(c.revenue / spend).toFixed(2) : null,
+      };
+    }).sort((a, b) => b.revenue - a.revenue);
 
     const totals = campaigns.reduce((t, c) => ({
       sent: t.sent + c.sent, delivered: t.delivered + c.delivered, read: t.read + c.read,
-      converted: t.converted + c.converted, revenue: t.revenue + c.revenue,
-    }), { sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0 });
+      converted: t.converted + c.converted, revenue: t.revenue + c.revenue, spend: t.spend + c.spend,
+    }), { sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0, spend: 0 });
+    totals.roas = (pricing.marketing_rate && totals.spend > 0) ? +(totals.revenue / totals.spend).toFixed(2) : null;
 
-    res.json({ days, campaigns, totals });
+    res.json({ days, campaigns, totals, pricing_configured: !!pricing.marketing_rate });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
