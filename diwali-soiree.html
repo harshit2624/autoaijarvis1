@@ -93,6 +93,7 @@ img{display:block;max-width:100%}
 .capacity-bar__top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
 .capacity-bar__label{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-bright);font-weight:700}
 .capacity-bar__count{font-family:'Bodoni Moda',serif;font-size:15px;color:var(--text);font-variant-numeric:tabular-nums}
+.capacity-bar__count--over{color:#e0536a;font-weight:700}
 .capacity-bar__track{width:100%;height:5px;border-radius:3px;background:var(--border);overflow:hidden}
 .capacity-bar__fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--gold),var(--gold-bright));width:0%;transition:width .6s ease}
 
@@ -508,14 +509,19 @@ setInterval(function () { if (document.visibilityState === 'visible') _dsTrack('
 function _loadCapacity() {
   fetch('/event/diwali-soiree/capacity').then(function (r) { return r.json(); }).then(function (d) {
     if (!d || !d.capacity) return;
-    var sold = Math.min(d.sold, d.capacity);
-    var pct = Math.round((sold / d.capacity) * 100);
+    var sold = d.sold; // real count, never capped — can read over capacity
+    var pct = Math.min(100, Math.round((sold / d.capacity) * 100)); // bar fill itself can't overflow its track
+    var overCapacity = sold > d.capacity;
     var bar = document.getElementById('capacity-bar');
-    document.getElementById('capacity-bar-count').textContent = sold + '/' + d.capacity + ' gone';
+    var countEl = document.getElementById('capacity-bar-count');
+    countEl.textContent = sold + '/' + d.capacity + ' booked';
+    countEl.classList.toggle('capacity-bar__count--over', overCapacity);
     document.getElementById('capacity-bar-fill').style.width = pct + '%';
     var labelEl = document.getElementById('capacity-bar-label');
     var remaining = d.capacity - sold;
-    labelEl.textContent = remaining <= 10 ? 'Almost full — ' + remaining + ' spots left' : 'Filling up fast';
+    labelEl.textContent = overCapacity ? 'Seats full — very limited space left'
+      : remaining <= 10 ? 'Last few seats left'
+      : 'Going fast — reserve yours';
     bar.hidden = false;
   }).catch(function () {});
 }

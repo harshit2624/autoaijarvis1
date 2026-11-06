@@ -16743,7 +16743,7 @@ function rollDiwaliScratchOutcome() {
 // the fun of it) but never pays out any more. Kept as a win-prob table
 // rather than deleting the mechanic in case capacity frees up later.
 const DIWALI_ROULETTE_WIN_PROB = { red: 0, black: 0, number: 0 };
-const DIWALI_EVENT_CAPACITY = 125;
+const DIWALI_EVENT_CAPACITY = 150;
 const DIWALI_ROULETTE_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 // Blocks obviously fake numbers (all-same-digit, simple runs) that people
