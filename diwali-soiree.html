@@ -88,6 +88,14 @@ img{display:block;max-width:100%}
 .expect-label b{display:block;font-family:'Bodoni Moda',serif;font-weight:400;font-size:17px;color:var(--text)}
 .expect-label span{font-size:10.5px;color:var(--body);letter-spacing:.04em}
 
+/* ── Urgency counter — live seats-sold vs. capacity ────────────── */
+.capacity-bar{margin:14px 0 18px;padding:14px 16px;border:1px solid var(--border-strong);border-radius:10px;background:rgba(176,138,75,.10)}
+.capacity-bar__top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+.capacity-bar__label{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-bright);font-weight:700}
+.capacity-bar__count{font-family:'Bodoni Moda',serif;font-size:15px;color:var(--text);font-variant-numeric:tabular-nums}
+.capacity-bar__track{width:100%;height:5px;border-radius:3px;background:var(--border);overflow:hidden}
+.capacity-bar__fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--gold),var(--gold-bright));width:0%;transition:width .6s ease}
+
 /* ── Tickets — menu-style, no boxed cards ─────────────────────── */
 .ticket-grid{display:flex;flex-direction:column;margin-top:4px}
 .ticket-card{
@@ -344,14 +352,23 @@ img{display:block;max-width:100%}
   <div class="section" id="tickets">
     <div class="section-title serif">Reservations</div>
     <div class="section-sub">Spaces are limited</div>
-    <div class="ticket-grid">
-      <div class="ticket-card selected" data-tier="single" data-amount="499" onclick="selectTier(this)">
-        <div class="ticket-row-left"><div class="ticket-radio"></div><div class="ticket-info"><b>Single Entry</b><span>One guest, full access</span></div></div>
-        <div class="ticket-price">₹499</div>
+
+    <div class="capacity-bar" id="capacity-bar" hidden>
+      <div class="capacity-bar__top">
+        <span class="capacity-bar__label" id="capacity-bar-label">Filling up fast</span>
+        <span class="capacity-bar__count" id="capacity-bar-count"></span>
       </div>
-      <div class="ticket-card" data-tier="group" data-amount="2199" onclick="selectTier(this)">
-        <div class="ticket-row-left"><div class="ticket-radio"></div><div class="ticket-info"><b>Party of Five</b><span>Best value — save ₹296<br>Note: minimum 2 females required per group</span></div></div>
-        <div class="ticket-price">₹2,199</div>
+      <div class="capacity-bar__track"><div class="capacity-bar__fill" id="capacity-bar-fill"></div></div>
+    </div>
+
+    <div class="ticket-grid">
+      <div class="ticket-card selected" data-tier="single" data-amount="699" onclick="selectTier(this)">
+        <div class="ticket-row-left"><div class="ticket-radio"></div><div class="ticket-info"><b>Single Entry</b><span>One guest, full access</span></div></div>
+        <div class="ticket-price">₹699</div>
+      </div>
+      <div class="ticket-card" data-tier="group" data-amount="2999" onclick="selectTier(this)">
+        <div class="ticket-row-left"><div class="ticket-radio"></div><div class="ticket-info"><b>Party of Five</b><span>Best value — save ₹496<br>Note: minimum 2 females required per group</span></div></div>
+        <div class="ticket-price">₹2,999</div>
       </div>
     </div>
 
@@ -400,14 +417,7 @@ img{display:block;max-width:100%}
             <div class="roulette-ball-track" id="roulette-ball-track"><div class="roulette-ball" id="roulette-ball"></div></div>
           </div>
           <span class="roulette-bet-label" id="roulette-bet-label" style="display:none">Your bet: <b id="roulette-bet-value"></b></span>
-          <span class="roulette-spinning-note" id="roulette-spinning-note" style="display:none">Spinning…</span>
-        </div>
-
-        <div class="roulette-board" id="roulette-board">
-          <div class="roulette-colorbets" id="roulette-bets">
-            <button class="bet-btn bet-red" onclick="placeRouletteBet('red')"><b>● RED</b><span>₹50 off</span></button>
-            <button class="bet-btn bet-black" onclick="placeRouletteBet('black')"><b>● BLACK</b><span>₹50 off</span></button>
-          </div>
+          <span class="roulette-spinning-note" id="roulette-spinning-note">Spinning…</span>
         </div>
 
         <div class="roulette-result" id="roulette-result">
@@ -440,7 +450,7 @@ img{display:block;max-width:100%}
       <span class="pay-summary-label">Total</span>
       <span class="pay-summary-amts">
         <span class="pay-summary-orig" id="pay-amt-orig"></span>
-        <span class="pay-summary-amt" id="pay-amt">₹499</span>
+        <span class="pay-summary-amt" id="pay-amt">₹699</span>
       </span>
     </div>
     <div class="pay-deal-countdown" id="pay-deal-countdown"></div>
@@ -479,7 +489,7 @@ img{display:block;max-width:100%}
 
 <script>
 var selectedTier = 'single';
-var selectedAmount = 499;
+var selectedAmount = 699;
 window.addEventListener('scroll', function () { document.getElementById('header').classList.toggle('scrolled', window.scrollY > 20); });
 
 // ── Lightweight visit tracking (dashboard: page views / live visitors /
@@ -493,6 +503,24 @@ function _dsTrack(type, extra) {
 }
 _dsTrack('view');
 setInterval(function () { if (document.visibilityState === 'visible') _dsTrack('heartbeat'); }, 20000);
+
+// ── Urgency counter — real seats sold vs. venue capacity ─────────────
+function _loadCapacity() {
+  fetch('/event/diwali-soiree/capacity').then(function (r) { return r.json(); }).then(function (d) {
+    if (!d || !d.capacity) return;
+    var sold = Math.min(d.sold, d.capacity);
+    var pct = Math.round((sold / d.capacity) * 100);
+    var bar = document.getElementById('capacity-bar');
+    document.getElementById('capacity-bar-count').textContent = sold + '/' + d.capacity + ' gone';
+    document.getElementById('capacity-bar-fill').style.width = pct + '%';
+    var labelEl = document.getElementById('capacity-bar-label');
+    var remaining = d.capacity - sold;
+    labelEl.textContent = remaining <= 10 ? 'Almost full — ' + remaining + ' spots left' : 'Filling up fast';
+    bar.hidden = false;
+  }).catch(function () {});
+}
+_loadCapacity();
+setInterval(_loadCapacity, 20000);
 var _dsFormStarted = false;
 document.getElementById('f-name').addEventListener('input', function () {
   if (!_dsFormStarted && this.value.trim()) { _dsFormStarted = true; _dsTrack('form_started'); }
@@ -606,7 +634,7 @@ function copyCoupon() {
 if (new URLSearchParams(location.search).get('preview') === '1') {
   document.getElementById('confirm-ticket-id').textContent = 'DS2-PREVIEW1';
   document.getElementById('confirm-qr').src = '/event/diwali-soiree/ticket-qr/DS2-PREVIEW1';
-  document.getElementById('confirm-detail').textContent = 'Harshit · Single Entry · ₹499';
+  document.getElementById('confirm-detail').textContent = 'Harshit · Single Entry · ₹699';
   document.getElementById('main-view').style.display = 'none';
   document.getElementById('confirm-screen').style.display = 'flex';
   initScratchCard();
@@ -695,7 +723,7 @@ var _rouletteCountdownTimer = null;
 
 var SCRATCH_COPY = {
   rasogulla:     { eyebrow: 'You got lucky!', code: 'FREE MAGIC RASOGULLA 🍬✨', text: 'Hurray! You just won a free magic rasogulla. Show this at the counter on event day.', btn: 'Got It 🎉' },
-  roulette:      { eyebrow: 'You unlocked a bonus game!', code: '🎰 ROULETTE', text: 'Place your bet — red or black for cash off.', btn: 'Play Roulette' },
+  roulette:      { eyebrow: 'You unlocked a bonus game!', code: '🎰 ROULETTE', text: 'Spin the wheel for a shot at a reward.', btn: 'Play Roulette' },
   discount100:   { eyebrow: 'Lucky scratch!', code: '₹100 OFF', text: "You've won ₹100 off your ticket! Claim it before the timer runs out.", btn: 'Apply ₹100 Off' },
   buy5get6:      { eyebrow: 'JACKPOT!', code: 'GROUP OF 5 → ENTRY FOR 6', text: 'Buy a Group Pass (5) and get a 6th entry FREE. Claim it before the timer runs out.', btn: 'Apply Bonus Entry' },
   freeticket499: { eyebrow: 'JACKPOT!', code: 'CREATESXCROSCROW', text: 'Pay ₹499 for your ticket, get ₹499 OFF on CROSCROW shopping — net cost: ₹0. Book in the next 2 hours to lock it in.', btn: 'Apply Now' },
@@ -1077,10 +1105,12 @@ function checkExistingRouletteSpin(phoneDigits) {
   fetch('/event/diwali-soiree/roulette-status?phone=' + encodeURIComponent(phoneDigits))
     .then(function (r) { return r.json(); })
     .then(function (d) {
-      if (!d.exists) return; // fresh — normal betting board stays up
+      // Offers are closed — no bet to pick anymore. A fresh guest never
+      // sees the betting board at all; the wheel just spins itself the
+      // moment roulette unlocks, straight to the "offers closed" result.
+      if (!d.exists) { _autoSpinRouletteClosed(phoneDigits); return; }
       _rouletteRoll = d;
       _rouletteAlreadyPlayed = true;
-      document.getElementById('roulette-board').style.display = 'none';
       document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(d.bet);
       document.getElementById('roulette-bet-label').style.display = 'inline-block';
       document.getElementById('roulette-spinning-note').style.display = 'block';
@@ -1090,6 +1120,13 @@ function checkExistingRouletteSpin(phoneDigits) {
         _reapplyClaimedRoulettePrice();
       }, 7700);
     }).catch(function () {});
+}
+
+// Offers-closed auto-spin for a first-time unlock — there's no bet board
+// at all, so this fires the spin (red, picked internally — the color
+// never matters since win odds are 0) the instant roulette unlocks.
+function _autoSpinRouletteClosed(phoneDigits) {
+  placeRouletteBet('red', true);
 }
 
 // If this phone's win was already claimed earlier, the discount IS locked
@@ -1119,9 +1156,6 @@ function _reapplyClaimedRoulettePrice() {
 }
 
 var _rouletteBetChoice = null;
-function _setRouletteBoardDisabled(disabled) {
-  document.querySelectorAll('#roulette-board button').forEach(function (b) { b.disabled = disabled; });
-}
 
 function _rouletteBetDisplay(bet) {
   if (bet === 'red') return '● RED';
@@ -1151,34 +1185,32 @@ function _animateRouletteTo(landed) {
   document.getElementById('roulette-ball').style.transform = 'translateY(-100px)';
 }
 
-function placeRouletteBet(bet) {
+function placeRouletteBet(bet, silent) {
   var phoneDigits = document.getElementById('f-phone').value.replace(/\D/g, '');
   _rouletteBetChoice = bet;
-  _clearNumberPrompt();
-  _setRouletteBoardDisabled(true);
   document.getElementById('roulette-spinning-note').style.display = 'block';
-  // Shown the instant a bet is placed — number bets had no visible
-  // confirmation of what was wagered before this, unlike the Red/Black
-  // buttons which already carried their own label.
-  document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(bet);
-  document.getElementById('roulette-bet-label').style.display = 'inline-block';
+  // Auto-spin (offers closed, no real bet chosen) skips the "Your bet:"
+  // badge entirely — there's nothing meaningful to label it with.
+  if (!silent) {
+    document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(bet);
+    document.getElementById('roulette-bet-label').style.display = 'inline-block';
+  }
 
   fetch('/event/diwali-soiree/roulette-spin', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone: phoneDigits, bet: bet }),
   }).then(function (r) { return r.json(); }).then(function (d) {
-    if (!d.landed) { document.getElementById('roulette-spinning-note').style.display = 'none'; _setRouletteBoardDisabled(false); return; }
+    if (!d.landed) { document.getElementById('roulette-spinning-note').style.display = 'none'; return; }
     _rouletteRoll = d;
     // Server is the source of truth for which bet actually counted — in the
     // rare case it returns an existing roll (e.g. a double-click race)
     // instead of the one just clicked, correct the badge to match it so it
     // can never contradict the result text below it.
-    document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(d.bet);
+    if (!silent) document.getElementById('roulette-bet-value').textContent = _rouletteBetDisplay(d.bet);
     _animateRouletteTo(d.landed);
     setTimeout(renderRouletteResult, 7700);
   }).catch(function () {
     document.getElementById('roulette-spinning-note').style.display = 'none';
-    _setRouletteBoardDisabled(false);
   });
 }
 
@@ -1187,7 +1219,6 @@ function _fmtRouletteCountdown(ms) { return _fmtCountdown(ms); }
 function renderRouletteResult() {
   if (!_rouletteRoll) return;
   document.getElementById('roulette-spinning-note').style.display = 'none';
-  document.getElementById('roulette-board').style.display = 'none';
   var resultEl = document.getElementById('roulette-result');
   resultEl.classList.add('show');
   var countdownEl = document.getElementById('rl-countdown');
@@ -1198,9 +1229,9 @@ function renderRouletteResult() {
   var replayPrefix = _rouletteAlreadyPlayed ? "You've already played! " : '';
 
   if (!_rouletteRoll.win) {
-    document.getElementById('rl-eyebrow').textContent = _rouletteAlreadyPlayed ? "You've already played" : 'So close!';
-    document.getElementById('rl-code').textContent = 'NO WIN THIS TIME';
-    document.getElementById('rl-text').textContent = replayPrefix + 'Your bet on ' + betDisplay + ' didn\'t hit — your ticket price stays as is. Better luck for next Diwali 🪔';
+    document.getElementById('rl-eyebrow').textContent = 'Offers Closed';
+    document.getElementById('rl-code').textContent = 'LIMITED SPACE LEFT';
+    document.getElementById('rl-text').textContent = 'All offers are closed for now — we\'re left with very limited space for Diwali Soiree. Better luck next Diwali 🪔';
     countdownEl.style.display = 'none';
     actionsEl.style.display = 'none';
     return;

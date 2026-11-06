@@ -542,12 +542,12 @@ function onPhoneInput() {
 }
 
 var modalTier = 'single';
-var PAX_RATE = 499; // single-entry per-head rate, used to prefill price for any custom pax count
+var PAX_RATE = 699; // single-entry per-head rate, used to prefill price for any custom pax count
 function suggestedAmount(pax, tier) {
   // The bundled Group-of-5 price (₹1,999) only applies at exactly 5 pax —
   // any other count (3, 7, whatever the door sale actually is) prices per
   // head off the single rate instead of guessing at a bundle discount.
-  if (tier === 'group' && pax === 5) return 2199;
+  if (tier === 'group' && pax === 5) return 2999;
   return pax * PAX_RATE;
 }
 function onPaxChange() {

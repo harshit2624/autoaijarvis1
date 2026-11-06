@@ -16717,8 +16717,8 @@ app.post("/track/razorpay-verify", async (req, res) => {
 //  DIWALI SOIREE 2.0 — event ticket booking (one-off, Nov 7 2026)
 // ══════════════════════════════════════════════════════════════════════════
 const DIWALI_TICKET_TIERS = {
-  single: { label: 'Single Entry', amount: 499 },
-  group:  { label: 'Group of 5',   amount: 2199 },
+  single: { label: 'Single Entry', amount: 699 },
+  group:  { label: 'Group of 5',   amount: 2999 },
 };
 
 // ── Scratch-card luck system ─────────────────────────────────────────────
@@ -16739,7 +16739,11 @@ function rollDiwaliScratchOutcome() {
 // Roulette mini-game. Two bets: a color (red/black, 70% win → ₹100 off) or
 // the lucky number (5% win → free ticket). Odds are enforced here,
 // server-side, never on the client.
-const DIWALI_ROULETTE_WIN_PROB = { red: 0.70, black: 0.70, number: 0 };
+// Offers are closed — venue is near capacity, the game still plays (for
+// the fun of it) but never pays out any more. Kept as a win-prob table
+// rather than deleting the mechanic in case capacity frees up later.
+const DIWALI_ROULETTE_WIN_PROB = { red: 0, black: 0, number: 0 };
+const DIWALI_EVENT_CAPACITY = 125;
 const DIWALI_ROULETTE_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 // Blocks obviously fake numbers (all-same-digit, simple runs) that people
@@ -17073,6 +17077,17 @@ app.get('/admin/diwali-tickets', diwaliGateAuth, async (req, res) => {
     const tickets = await mdb.collection('event_tickets').find({ event: 'diwali_soiree_2026' }, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
     const totalRevenue = tickets.reduce((s, t) => s + (t.amount || 0), 0);
     res.json({ tickets, count: tickets.length, total_revenue: totalRevenue });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /event/diwali-soiree/capacity — public, powers the urgency counter
+// on the booking page ("108/125 gone"). Sold = total pax across all paid/
+// manual tickets, not ticket count, since capacity is a headcount limit.
+app.get('/event/diwali-soiree/capacity', async (req, res) => {
+  try {
+    const tickets = await mdb.collection('event_tickets').find({ event: 'diwali_soiree_2026', status: { $ne: 'cancelled' } }, { projection: { pax: 1, tier: 1, _id: 0 } }).toArray();
+    const sold = tickets.reduce((s, t) => s + (t.pax != null ? t.pax : (t.tier === 'group' ? 5 : 1)), 0);
+    res.json({ sold, capacity: DIWALI_EVENT_CAPACITY });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
