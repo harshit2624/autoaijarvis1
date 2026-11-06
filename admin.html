@@ -13553,6 +13553,13 @@
     back_in_stock_v1: 'Back In Stock Alert',
     weekend_bestsellers_carousel_v1: 'Carousel — Weekend Bestsellers (v1)',
     weekend_bestsellers_carousel_v2: 'Carousel — Weekend Bestsellers (v2)',
+    // utm_campaign values — the click-based funnel table keys off these,
+    // which aren't always identical to the wa_send_log template names above
+    // (touch2/touch3 got their own distinct UTM tags precisely so clicks
+    // could be told apart — see waAbandonedCartDiscountUrl in server.js).
+    abandoned_cart_touch2: 'Abandoned Cart — Touch 2 (24h)',
+    abandoned_cart_touch3: 'Abandoned Cart — Touch 3 (48h)',
+    product_query: 'Support Chatbot — Product Inquiry',
   };
   const WA_STATUS_DOT = {
     not_sent: 'var(--text-muted)', sent: 'var(--gray)', delivered: 'var(--cyan)', read: 'var(--green)', failed: 'var(--red)',
@@ -13634,6 +13641,7 @@
     const [days, setDays] = React.useState(30);
     const [data, setData] = React.useState(null);
     const [campaignData, setCampaignData] = React.useState(null);
+    const [funnelData, setFunnelData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [search, setSearch] = React.useState('');
     const [intentFilter, setIntentFilter] = React.useState('all');
@@ -13643,7 +13651,8 @@
       Promise.all([
         fetch(`${API}/admin/wa-marketing/overview?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
         fetch(`${API}/admin/wa-marketing/campaigns?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
-      ]).then(([d,cd]) => { if (d && !d.error) setData(d); if (cd && !cd.error) setCampaignData(cd); }).finally(()=>setLoading(false));
+        fetch(`${API}/admin/wa-marketing/campaign-funnel?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
+      ]).then(([d,cd,fd]) => { if (d && !d.error) setData(d); if (cd && !cd.error) setCampaignData(cd); if (fd && !fd.error) setFunnelData(fd); }).finally(()=>setLoading(false));
     }, [days, token]);
     React.useEffect(load, [load]);
 
@@ -13734,6 +13743,63 @@
                       </tr>
                     ))}
                     {!campaignData.campaigns.length && <tr><td colSpan="9" style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}>No marketing sends in this range yet</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Click-based campaign funnel ── */}
+        {/* The table above measures sends → opens → "converted" by matching
+            a phone number against their orders (a real signal, but it can
+            only ever tell you "this customer bought something near the
+            right time," never "this specific click led here"). This one is
+            built from the actual UTM-tagged link each campaign sends —
+            cc-track.js stamps every on-site event with it the moment
+            someone lands from that link, for the full 7-day attribution
+            window, whether the click drops them on a product page, a
+            collection, or straight into checkout. Orders/revenue come from
+            order_meta.ad_campaign — read directly off the real Shopify
+            order's own attribution data (GoKwik/Shopify capture this
+            automatically on checkout), not matched after the fact. This is
+            the same model paid ad platforms and tools like Klaviyo/GoKwik
+            Engage use: a click-to-purchase funnel, not a coincidence check. */}
+        {funnelData && (
+          <div className="card" style={{marginBottom:16}}>
+            <div className="card-header">
+              <span className="card-title">🔗 Click-Based Funnel (UTM Attribution)</span>
+              <span className="card-sub">Sessions landed from each campaign link → add to cart → checkout started → real orders</span>
+            </div>
+            <div style={{padding:16}}>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11.5}}>
+                  <thead>
+                    <tr style={{color:'var(--text-muted)',textAlign:'left',borderBottom:'1px solid var(--border)'}}>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Campaign</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Source</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Sessions</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Add to Cart</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Checkout Started</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Orders</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Session → Order</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {funnelData.campaigns.map((c,i) => (
+                      <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                        <td style={{padding:'9px 8px',color:'var(--text)',fontWeight:600}}>{WA_CAMPAIGN_LABELS[c.campaign] || c.campaign}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-muted)',fontSize:10.5}}>{c.source || '—'}{c.medium ? ` / ${c.medium}` : ''}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{c.sessions}</td>
+                        <td style={{padding:'9px 8px',color:'var(--cyan)'}}>{c.add_to_cart}</td>
+                        <td style={{padding:'9px 8px',color:'var(--yellow)'}}>{c.checkout_initiated}</td>
+                        <td style={{padding:'9px 8px',color:'var(--green)',fontWeight:600}}>{c.orders}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{c.session_to_order_rate!=null ? (100*c.session_to_order_rate).toFixed(1)+'%' : '—'}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text)',fontWeight:700}}>{waFmtMoney(c.revenue)}</td>
+                      </tr>
+                    ))}
+                    {!funnelData.campaigns.length && <tr><td colSpan="8" style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}>No UTM-tagged clicks recorded in this range yet — this starts filling in as campaign links get clicked</td></tr>}
                   </tbody>
                 </table>
               </div>
