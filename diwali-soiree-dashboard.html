@@ -162,6 +162,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
 
     <div class="section-title">Guest List</div>
     <div class="section-sub" id="list-sub">Loading…</div>
+    <input class="inp" id="ticket-search" placeholder="Search by name, phone, or ticket ID…" oninput="renderList()" style="border:1px solid var(--border);padding:12px 14px;margin-bottom:10px;width:100%;text-align:left">
     <div class="filters">
       <button class="filter-chip active" data-f="all" onclick="setFilter('all')">All <span id="fc-all">0</span></button>
       <button class="filter-chip" data-f="entered" onclick="setFilter('entered')">Entered <span id="fc-entered">0</span></button>
@@ -190,8 +191,8 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
     <div class="form-group">
       <span class="form-label">Ticket Tier</span>
       <div class="tier-select">
-        <div class="tier-opt selected" data-tier="single" onclick="selectModalTier(this)">Single · ₹499</div>
-        <div class="tier-opt" data-tier="group" onclick="selectModalTier(this)">Group of 5 · ₹1,999</div>
+        <div class="tier-opt selected" data-tier="single" onclick="selectModalTier(this)">Single · ₹699</div>
+        <div class="tier-opt" data-tier="group" onclick="selectModalTier(this)">Group of 5 · ₹2,999</div>
       </div>
     </div>
     <div class="form-group">
@@ -240,7 +241,71 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
       <a class="btn" id="qr-download" href="" download style="text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center">Download QR</a>
       <button class="btn" id="qr-wa-btn" onclick="sendTicketWA()">Send on WhatsApp</button>
     </div>
+    <div class="modal-actions" style="margin-top:10px">
+      <button class="btn-cancel" onclick="openEditModal()">Edit Ticket</button>
+      <button class="btn-cancel" style="color:#e0536a;border-color:#e0536a" onclick="openDeleteConfirm()">Delete Ticket</button>
+    </div>
     <button class="btn-cancel" style="width:100%;margin-top:10px" onclick="closeModal('qr-overlay')">Done</button>
+  </div>
+</div>
+
+<!-- Edit Ticket Modal -->
+<div class="modal-overlay" id="edit-overlay">
+  <div class="modal">
+    <div class="modal-title serif">Edit Ticket</div>
+    <div class="modal-sub" id="edit-sub"></div>
+    <div class="form-group">
+      <span class="form-label">Ticket Tier</span>
+      <div class="tier-select">
+        <div class="tier-opt" data-tier="single" id="edit-tier-single" onclick="selectEditTier(this)">Single · ₹699</div>
+        <div class="tier-opt" data-tier="group" id="edit-tier-group" onclick="selectEditTier(this)">Group of 5 · ₹2,999</div>
+      </div>
+    </div>
+    <div class="form-group">
+      <span class="form-label">No. of Pax</span>
+      <input class="inp" id="e-pax" type="number" min="1" style="border:1px solid var(--border);padding:13px 14px">
+    </div>
+    <div class="form-group"><input class="inp" id="e-name" placeholder="Guest Name" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group">
+      <input class="inp" id="e-phone" placeholder="Phone" inputmode="tel" oninput="onEditPhoneInput()" style="border:1px solid var(--border);padding:13px 14px">
+      <div id="e-phone-hint" style="font-size:10.5px;color:var(--muted);margin-top:4px"></div>
+    </div>
+    <div class="form-group"><input class="inp" id="e-email" placeholder="Email (optional)" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group">
+      <span class="form-label">Amount</span>
+      <input class="inp" id="e-amount" type="number" style="border:1px solid var(--border);padding:13px 14px">
+    </div>
+    <div class="form-group"><input class="inp" id="e-note" placeholder="Note (optional)" style="border:1px solid var(--border);padding:13px 14px"></div>
+    <div class="form-group" style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="e-charchit" style="cursor:pointer;width:16px;height:16px">
+      <label for="e-charchit" style="cursor:pointer;font-size:12.5px;color:var(--text)">Money collected by Charchit</label>
+    </div>
+    <div class="form-group">
+      <span class="form-label">PIN to Confirm</span>
+      <input class="inp" id="e-pin" placeholder="PIN" type="password" inputmode="numeric" maxlength="4" style="border:1px solid var(--border);padding:13px 14px">
+    </div>
+    <div class="err-msg" id="edit-err"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('edit-overlay')">Cancel</button>
+      <button class="btn" id="edit-submit-btn" onclick="submitEditTicket()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Ticket Confirm Modal -->
+<div class="modal-overlay" id="delete-overlay">
+  <div class="modal">
+    <div class="modal-title serif">Delete Ticket</div>
+    <div class="modal-sub" id="delete-sub">This permanently removes the ticket — it cannot be undone.</div>
+    <div class="form-group">
+      <span class="form-label">PIN to Confirm</span>
+      <input class="inp" id="d-pin" placeholder="PIN" type="password" inputmode="numeric" maxlength="4" style="border:1px solid var(--border);padding:13px 14px">
+    </div>
+    <div class="err-msg" id="delete-err"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('delete-overlay')">Cancel</button>
+      <button class="btn" id="delete-submit-btn" style="background:#e0536a" onclick="submitDeleteTicket()">Delete Permanently</button>
+    </div>
   </div>
 </div>
 
@@ -467,8 +532,17 @@ function renderList() {
   else if (currentFilter === 'single' || currentFilter === 'group') list = list.filter(function (t) { return t.tier === currentFilter; });
   else if (currentFilter === 'charchit') list = list.filter(function (t) { return t.collected_by_charchit; });
 
+  var q = (document.getElementById('ticket-search').value || '').trim().toLowerCase();
+  if (q) {
+    list = list.filter(function (t) {
+      return (t.name || '').toLowerCase().indexOf(q) !== -1 ||
+        (t.phone || '').indexOf(q) !== -1 ||
+        (t.ticket_id || '').toLowerCase().indexOf(q) !== -1;
+    });
+  }
+
   var el = document.getElementById('ticket-list');
-  if (!list.length) { el.innerHTML = '<div class="empty-state">No tickets yet</div>'; return; }
+  if (!list.length) { el.innerHTML = '<div class="empty-state">' + (q ? 'No tickets match "' + escapeHtml(q) + '"' : 'No tickets yet') + '</div>'; return; }
 
   el.innerHTML = list.map(function (t) {
     var time = new Date(t.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -610,6 +684,97 @@ function submitManualTicket() {
     })
     .catch(function (e) { document.getElementById('add-err').textContent = e.message || 'Failed to create ticket'; })
     .finally(function () { btn.disabled = false; btn.textContent = 'Create Ticket'; });
+}
+
+function selectEditTier(el) {
+  document.querySelectorAll('#edit-overlay .tier-opt').forEach(function (c) { c.classList.remove('selected'); });
+  el.classList.add('selected');
+}
+function onEditPhoneInput() {
+  var raw = document.getElementById('e-phone').value;
+  var normalized = normalizePhone10(raw);
+  var hint = document.getElementById('e-phone-hint');
+  if (!raw.trim()) { hint.textContent = ''; return; }
+  hint.textContent = normalized.length === 10 ? ('✓ Will save as +91 ' + normalized) : 'Enter a valid 10-digit mobile number';
+  hint.style.color = normalized.length === 10 ? 'var(--ok)' : 'var(--warn)';
+}
+function openEditModal() {
+  var t = allTickets.find(function (x) { return x.ticket_id === _currentQrTicketId; });
+  if (!t) return;
+  document.getElementById('edit-sub').textContent = t.ticket_id;
+  document.querySelectorAll('#edit-overlay .tier-opt').forEach(function (c) { c.classList.remove('selected'); });
+  document.getElementById(t.tier === 'group' ? 'edit-tier-group' : 'edit-tier-single').classList.add('selected');
+  document.getElementById('e-pax').value = pax(t);
+  document.getElementById('e-name').value = t.name || '';
+  document.getElementById('e-phone').value = t.phone || '';
+  document.getElementById('e-phone-hint').textContent = '';
+  document.getElementById('e-email').value = t.email || '';
+  document.getElementById('e-amount').value = t.amount;
+  document.getElementById('e-note').value = t.note || '';
+  document.getElementById('e-charchit').checked = !!t.collected_by_charchit;
+  document.getElementById('e-pin').value = '';
+  document.getElementById('edit-err').textContent = '';
+  document.getElementById('qr-overlay').style.display = 'none';
+  document.getElementById('edit-overlay').style.display = 'flex';
+}
+function submitEditTicket() {
+  var tierEl = document.querySelector('#edit-overlay .tier-opt.selected');
+  var tier = tierEl ? tierEl.dataset.tier : null;
+  var name = document.getElementById('e-name').value.trim();
+  var phone = normalizePhone10(document.getElementById('e-phone').value);
+  var email = document.getElementById('e-email').value.trim();
+  var pax = parseInt(document.getElementById('e-pax').value, 10);
+  var amount = document.getElementById('e-amount').value.trim();
+  var note = document.getElementById('e-note').value.trim();
+  var charchit = document.getElementById('e-charchit').checked;
+  var pin = document.getElementById('e-pin').value.trim();
+  if (!name) return document.getElementById('edit-err').textContent = 'Enter guest name';
+  if (phone.length !== 10) return document.getElementById('edit-err').textContent = 'Enter a valid 10-digit phone number';
+  if (!pin) return document.getElementById('edit-err').textContent = 'Enter the PIN to confirm';
+  document.getElementById('edit-err').textContent = '';
+
+  var btn = document.getElementById('edit-submit-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  var body = { tier: tier, name: name, phone: phone, email: email, pax: pax, amount: Number(amount), note: note, collected_by_charchit: charchit, pin: pin };
+
+  fetch('/admin/diwali-tickets/' + encodeURIComponent(_currentQrTicketId), { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) throw new Error(d.error);
+      closeModal('edit-overlay');
+      loadTickets();
+    })
+    .catch(function (e) { document.getElementById('edit-err').textContent = e.message || 'Failed to save changes'; })
+    .finally(function () { btn.disabled = false; btn.textContent = 'Save Changes'; });
+}
+
+function openDeleteConfirm() {
+  var t = allTickets.find(function (x) { return x.ticket_id === _currentQrTicketId; });
+  if (!t) return;
+  document.getElementById('delete-sub').textContent = escapeHtml(t.name || 'Guest') + ' · ' + t.ticket_id + ' — this permanently removes the ticket. It cannot be undone.';
+  document.getElementById('d-pin').value = '';
+  document.getElementById('delete-err').textContent = '';
+  document.getElementById('qr-overlay').style.display = 'none';
+  document.getElementById('delete-overlay').style.display = 'flex';
+}
+function submitDeleteTicket() {
+  var pin = document.getElementById('d-pin').value.trim();
+  if (!pin) return document.getElementById('delete-err').textContent = 'Enter the PIN to confirm';
+  document.getElementById('delete-err').textContent = '';
+
+  var btn = document.getElementById('delete-submit-btn');
+  btn.disabled = true; btn.textContent = 'Deleting…';
+
+  fetch('/admin/diwali-tickets/' + encodeURIComponent(_currentQrTicketId) + '?pin=' + encodeURIComponent(pin), { method: 'DELETE', headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) throw new Error(d.error);
+      closeModal('delete-overlay');
+      loadTickets();
+    })
+    .catch(function (e) { document.getElementById('delete-err').textContent = e.message || 'Failed to delete ticket'; })
+    .finally(function () { btn.disabled = false; btn.textContent = 'Delete Permanently'; });
 }
 
 function viewTicketQrById(ticketId, name, tier) {
