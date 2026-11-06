@@ -144,6 +144,7 @@ async function startServer() {
       mdb.collection("site_events").createIndex({ session_id: 1 }),
       mdb.collection("site_events").createIndex({ brand: 1, event: 1 }),
       mdb.collection("site_events").createIndex({ product_handle: 1, event: 1 }),
+      mdb.collection("site_events").createIndex({ utm_campaign: 1, event: 1, created_at: -1 }),
       mdb.collection("admin_sessions").createIndex({ token: 1 }, { unique: true }),
       mdb.collection("admin_sessions").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
       mdb.collection("product_commission_rules").createIndex({ vendor_name: 1, product_id: 1 }, { unique: true, sparse: true }),
@@ -167,6 +168,13 @@ async function startServer() {
     process.exit(1);
   }
 
+  app.get('/_tmp_theme_debug2', async (req, res) => {
+    try {
+      const { themeId, key } = req.query;
+      const data = await shopifyREST(`/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`);
+      res.json(data);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
   app.listen(PORT, () => {
     console.log(`\n🚀  JARVIS Shopify Server running on port ${PORT}`);
     console.log(`    Shop    : ${SHOP}.myshopify.com`);
@@ -305,13 +313,19 @@ function extractCampaignAttribution(payload) {
       }
     } catch (e) { /* ignore malformed landing_site */ }
   }
-  if (!campaign || !String(source||'').toLowerCase().includes('meta')) {
-    // Not Meta-attributed (or no campaign at all) — still worth keeping
-    // source/medium for non-Meta channels, but campaign matching only
-    // applies to Meta traffic.
-    return { source: source || null, campaign: null, medium: medium || null, adId: null };
-  }
-  return { source, campaign, medium: medium || null, adId: adId || null };
+  // Used to null out `campaign` for anything that wasn't Meta — meaning
+  // real UTM-tagged WhatsApp campaign clicks (abandoned-cart touches,
+  // win-back, event recovery, etc.) were landing on real orders with the
+  // campaign name right there in note_attributes, captured correctly by
+  // GoKwik/Shopify on click-through, and then this function was throwing
+  // it away. This is the deterministic, click-to-purchase attribution a
+  // real ad/marketing platform uses — far more reliable than matching a
+  // customer's phone against their order history after the fact. `adId`
+  // stays Meta-only (it only exists for the Meta-ads-insights join); every
+  // other channel's real campaign name now flows through. Fixed 2026-11-07.
+  const isMeta = String(source || '').toLowerCase().includes('meta') || String(source || '').toLowerCase() === 'facebook';
+  if (!campaign) return { source: source || null, campaign: null, medium: medium || null, adId: null };
+  return { source, campaign, medium: medium || null, adId: isMeta ? (adId || null) : null };
 }
 
 async function snapshotOrder(payload) {
@@ -1697,6 +1711,41 @@ async function shopifyGraphQL(query, variables = {}) {
   const data = await res.json();
   if (!res.ok || data.errors) throw new Error(`Shopify GraphQL error: ${JSON.stringify(data.errors || data)}`);
   return data.data;
+}
+
+// Shopify's REST /orders.json has NO phone filter — `?phone=X` is silently
+// ignored by the API (confirmed empirically: it returns the 5 most-recent
+// orders in the ENTIRE store regardless of what phone is given, with no
+// error). Every caller that used this pattern to check "has this customer
+// ordered" was actually comparing against whatever orders happened to be
+// most recent store-wide — this is what inflated WA-campaign conversion/
+// recovery numbers (and silently wrong-skipped abandoned-cart touches) —
+// found + fixed 2026-11-07. GraphQL's customers(query:"phone:...") does
+// filter correctly; look the customer up first, then read their own
+// orders connection.
+async function ordersByPhone(phone10, limit = 5) {
+  if (!phone10 || phone10.length !== 10) return [];
+  try {
+    const data = await shopifyGraphQL(`
+      query($q: String!, $n: Int!) {
+        customers(first: 1, query: $q) {
+          edges { node { orders(first: $n, sortKey: CREATED_AT, reverse: true) {
+            edges { node { name createdAt totalPriceSet { shopMoney { amount } } } }
+          } } }
+        }
+      }
+    `, { q: `phone:+91${phone10}`, n: limit });
+    const customer = data?.customers?.edges?.[0]?.node;
+    if (!customer) return [];
+    return (customer.orders?.edges || []).map(e => ({
+      name: e.node.name,
+      created_at: e.node.createdAt,
+      total_price: e.node.totalPriceSet?.shopMoney?.amount || '0',
+    }));
+  } catch (e) {
+    console.error('ordersByPhone error:', e.message);
+    return [];
+  }
 }
 
 // ── Issue Shopify Store Credit to a customer ───────────────────────────────
@@ -17402,6 +17451,52 @@ app.post('/admin/diwali-tickets/manual', diwaliGateAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// PUT /admin/diwali-tickets/:ticket_id — edit an existing ticket's details.
+// Same PIN gate as manual creation — this changes what's printed/scanned
+// at the door, so it isn't a casual action.
+app.put('/admin/diwali-tickets/:ticket_id', diwaliGateAuth, async (req, res) => {
+  try {
+    const { ticket_id } = req.params;
+    const { tier, name, phone, email, amount, pax, note, pin, collected_by_charchit } = req.body || {};
+    if (String(pin || '') !== DIWALI_MANUAL_PIN) return res.status(403).json({ error: 'Incorrect PIN.' });
+    const existing = await mdb.collection('event_tickets').findOne({ ticket_id, event: 'diwali_soiree_2026' });
+    if (!existing) return res.status(404).json({ error: 'Ticket not found.' });
+
+    const update = {};
+    if (tier && DIWALI_TICKET_TIERS[tier]) { update.tier = tier; update.tier_label = DIWALI_TICKET_TIERS[tier].label; }
+    if (name != null) update.name = name;
+    if (phone != null) update.phone = String(phone).replace(/\D/g, '').slice(-10);
+    if (email != null) update.email = email;
+    if (amount === 0 || amount) update.amount = Number(amount);
+    if (pax === 0 || pax) update.pax = Math.max(1, parseInt(pax, 10));
+    if (note != null) update.note = note;
+    if (collected_by_charchit != null) update.collected_by_charchit = !!collected_by_charchit;
+    update.updated_at = new Date().toISOString();
+    update.updated_by = req.staffUsername || 'admin';
+
+    await mdb.collection('event_tickets').updateOne({ ticket_id }, { $set: update });
+    auditLog('admin', 'diwali_ticket_edit', ticket_id, update);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /admin/diwali-tickets/:ticket_id — remove a wrongly-created or
+// test ticket. PIN-gated (query param, since DELETE bodies are awkward
+// to send reliably from fetch) — this permanently frees up the capacity
+// count and removes the ticket from every report.
+app.delete('/admin/diwali-tickets/:ticket_id', diwaliGateAuth, async (req, res) => {
+  try {
+    const { ticket_id } = req.params;
+    const { pin } = req.query;
+    if (String(pin || '') !== DIWALI_MANUAL_PIN) return res.status(403).json({ error: 'Incorrect PIN.' });
+    const existing = await mdb.collection('event_tickets').findOne({ ticket_id, event: 'diwali_soiree_2026' });
+    if (!existing) return res.status(404).json({ error: 'Ticket not found.' });
+    await mdb.collection('event_tickets').deleteOne({ ticket_id });
+    auditLog('admin', 'diwali_ticket_delete', ticket_id, { name: existing.name, phone: existing.phone, amount: existing.amount });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /event/diwali-soiree/ticket-qr/:ticket_id — QR image (public, the
 // ticket_id itself is the only secret and it's long/random enough that
 // guessing one isn't practical). Encodes the check-in page URL directly
@@ -19466,12 +19561,23 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
     appliedStage = result?.stage ?? effectiveNewStage;
     protectedFromDowngrade = !!result?.protectedFromDowngrade;
     blockedByManualOverride = !!result?.blocked;
-    auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, rawClassification: newStage, requestedStage: effectiveNewStage, appliedStage, protectedFromDowngrade, blockedByManualOverride, reroutedToStuck: effectiveNewStage !== newStage });
-    logStageEvent({
-      shopifyId: sid, vendor: vendorName, fromStage: beforeStage, toStage: appliedStage, awb, actor: 'cron', actorId: 'shipsagar_tracking_cron', source: 'shipsagar_stage_sync',
-      reason: effectiveNewStage === 'stuck' ? `pickup never confirmed — courier says: "${desc}"` : desc,
-      skipped: blockedByManualOverride, skipReason: blockedByManualOverride ? 'blocked by manually_overridden flag' : (protectedFromDowngrade ? '' : ''),
-    });
+    // This fires on every poll of every active shipment (cron, admin refresh,
+    // customer track page — this function is the shared sync path for all of
+    // them), and the overwhelming majority of polls find nothing new to
+    // report ("still in transit"). Logging those no-op polls as audit/stage
+    // events was filling order_stage_events and audit_log with near-100%
+    // noise (97%/94% of their entire volume respectively) for zero signal —
+    // only log when the stage actually moved, or when something meaningful
+    // blocked it from moving (a manual override holding it back).
+    const stageActuallyChanged = beforeStage !== appliedStage;
+    if (stageActuallyChanged || blockedByManualOverride) {
+      auditLog('shipsagar', 'stage_sync', sid, { vendor: vendorName, awb, desc, rawClassification: newStage, requestedStage: effectiveNewStage, appliedStage, protectedFromDowngrade, blockedByManualOverride, reroutedToStuck: effectiveNewStage !== newStage });
+      logStageEvent({
+        shopifyId: sid, vendor: vendorName, fromStage: beforeStage, toStage: appliedStage, awb, actor: 'cron', actorId: 'shipsagar_tracking_cron', source: 'shipsagar_stage_sync',
+        reason: effectiveNewStage === 'stuck' ? `pickup never confirmed — courier says: "${desc}"` : desc,
+        skipped: blockedByManualOverride, skipReason: blockedByManualOverride ? 'blocked by manually_overridden flag' : '',
+      });
+    }
   }
 
   return { desc, newStage: appliedStage, requestedStage: effectiveNewStage, protectedFromDowngrade, blockedByManualOverride, history: ss.history };
@@ -28535,6 +28641,14 @@ const SITE_EVENT_NAMES = [
   // visibility into whether people actually grab one), and whether an
   // upsell add correlates with checking out vs bouncing.
   'cart_checkout_click', 'cart_coupon_copy', 'cart_upsell_add',
+  // Fires once per session the moment a utm_campaign param is first seen in
+  // the URL — the session-level counterpart to order_meta.ad_campaign
+  // (which only exists once/if that session converts). This is what makes
+  // a real funnel possible: sessions landed → add_to_cart → checkout click
+  // → (joined separately, from order_meta) actual orders — for ANY
+  // campaign link, whether it drops the visitor on a product/collection
+  // page or goes straight into GoKwik checkout. See cc-track.js.
+  'campaign_landed',
 ];
 
 // Batched ingestion — the client script queues events in memory and flushes
@@ -28562,6 +28676,14 @@ app.post('/track/site-events', async (req, res) => {
         position: Number.isFinite(e.position) ? e.position : null,
         value: Number.isFinite(e.value) ? e.value : null,
         client_ts: Number.isFinite(e.ts) ? e.ts : null,
+        // Campaign attribution (WA/other) — carried by every event in a
+        // session once cc-track.js has captured a utm_campaign from the
+        // landing URL, not just the one campaign_landed event. Separate
+        // field names from `source` above (card_click's image/title
+        // source) to avoid colliding with an unrelated existing field.
+        utm_source: e.utm_source ? String(e.utm_source).slice(0, 60) : null,
+        utm_campaign: e.utm_campaign ? String(e.utm_campaign).slice(0, 120) : null,
+        utm_medium: e.utm_medium ? String(e.utm_medium).slice(0, 60) : null,
         created_at: now,
       }));
     if (docs.length) await mdb.collection('site_events').insertMany(docs, { ordered: false });
@@ -28704,6 +28826,74 @@ app.get('/admin/site-analytics/cart-drawer-funnel', adminAuth, async (req, res) 
       upsell_checkout_rate: upsellCheckoutRate,
       non_upsell_checkout_rate: nonUpsellCheckoutRate,
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── WA/marketing campaign funnel — sessions → add-to-cart → checkout-click
+// → orders/revenue, per campaign, for ANY campaign link regardless of
+// whether it drops the visitor on a product/collection page (product-
+// inquiry chatbot links, etc.) or goes straight into GoKwik checkout
+// (abandoned-cart touches). Sessions/ATC/checkout-click come from
+// site_events (tagged client-side by cc-track.js the moment a utm_campaign
+// is seen in the landing URL — see assets/cc-track.js). Orders/revenue
+// come from order_meta.ad_campaign, which is captured deterministically
+// off the real Shopify order's note_attributes (GoKwik writes the same
+// UTM params there once a session actually converts) — never guessed or
+// phone-matched. Two independently-sourced signals joined by campaign
+// name, exactly the shape a real ad-platform funnel report takes.
+app.get('/admin/wa-marketing/campaign-funnel', adminAuth, async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 30, 180);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const funnelRows = await mdb.collection('site_events').aggregate([
+      { $match: { utm_campaign: { $ne: null }, created_at: { $gte: since } } },
+      { $group: {
+          _id: '$utm_campaign',
+          utm_source: { $first: '$utm_source' },
+          utm_medium: { $first: '$utm_medium' },
+          sessions: { $addToSet: '$session_id' },
+          atc_count: { $sum: { $cond: [{ $eq: ['$event', 'add_to_cart'] }, 1, 0] } },
+          checkout_click_count: { $sum: { $cond: [{ $eq: ['$event', 'cart_checkout_click'] }, 1, 0] } },
+          buy_now_count: { $sum: { $cond: [{ $eq: ['$event', 'buy_now'] }, 1, 0] } },
+        } },
+      { $project: {
+          campaign: '$_id', _id: 0, utm_source: 1, utm_medium: 1,
+          sessions: { $size: '$sessions' },
+          atc_count: 1, checkout_click_count: 1, buy_now_count: 1,
+        } },
+    ]).toArray();
+
+    const sinceISO = since.toISOString();
+    const orderRows = await mdb.collection('order_meta').aggregate([
+      { $match: { ad_campaign: { $ne: null }, shopify_created_at: { $gte: sinceISO } } },
+      { $group: { _id: '$ad_campaign', orders: { $sum: 1 }, revenue: { $sum: { $toDouble: { $ifNull: ['$total_price', 0] } } } } },
+    ]).toArray();
+    const orderMap = {};
+    orderRows.forEach(r => { orderMap[r._id] = r; });
+
+    // Union of campaign names from both sources — a campaign can show up in
+    // one without the other yet (e.g. clicks today, no orders settled yet).
+    const allCampaigns = new Set([...funnelRows.map(r => r.campaign), ...orderRows.map(r => r._id)]);
+    const rows = [...allCampaigns].map(campaign => {
+      const f = funnelRows.find(r => r.campaign === campaign) || {};
+      const o = orderMap[campaign] || { orders: 0, revenue: 0 };
+      const sessions = f.sessions || 0;
+      return {
+        campaign,
+        source: f.utm_source || null,
+        medium: f.utm_medium || null,
+        sessions,
+        add_to_cart: f.atc_count || 0,
+        checkout_initiated: (f.checkout_click_count || 0) + (f.buy_now_count || 0),
+        orders: o.orders,
+        revenue: Math.round((o.revenue || 0) * 100) / 100,
+        session_to_cart_rate: sessions ? (f.atc_count || 0) / sessions : null,
+        session_to_order_rate: sessions ? o.orders / sessions : null,
+      };
+    }).sort((a, b) => b.revenue - a.revenue || b.sessions - a.sessions);
+
+    res.json({ days, campaigns: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -30280,10 +30470,16 @@ app.post('/admin/wa-cloud/chats/:phone/send', adminAuth, async (req, res) => {
 // the ₹150 off already applied, no code typed. Works on the bare
 // croscrow.com?mrid=... recovery link too (GoKwik's mrid-resume script
 // hijacks the same page load the UTM engine reads, doesn't bypass it).
-function waAbandonedCartDiscountUrl(url) {
+// `campaign` defaults to the original generic name (used by call sites that
+// don't yet pass one) — but every touch should pass its own distinct value
+// so attribution can actually tell them apart instead of every abandoned-
+// cart click, regardless of which touch sent it, landing under one
+// indistinguishable "abandoned_cart_recovery" campaign name. See
+// extractCampaignAttribution's fix above for why this now matters.
+function waAbandonedCartDiscountUrl(url, campaign = 'abandoned_cart_recovery') {
   if (!url) return url;
   const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}utm_source=whatsapp&utm_medium=chatbot&utm_campaign=abandoned_cart_recovery`;
+  return `${url}${sep}utm_source=whatsapp&utm_medium=chatbot&utm_campaign=${encodeURIComponent(campaign)}`;
 }
 
 // ── Abandoned-cart 3-touch sequence — Touch 2 (24h) and Touch 3 (48h) ────
@@ -30291,11 +30487,18 @@ function waAbandonedCartDiscountUrl(url) {
 // picks up carts that are due for the next touch, skips anyone who
 // already placed a real order since abandoning (checked live via Shopify,
 // not a stale local flag), and never re-sends a touch already sent.
-async function abandonedCartHasRecentOrder(phone) {
+// `since` must be the cart's own abandonment time — without it this was
+// matching ANY order this phone has EVER placed, lifetime, with zero date
+// filter. That meant any repeat/returning customer (exactly who abandoned-
+// cart nudges should be reaching) got silently skipped forever as
+// "already_ordered", and inflated the same false-positive logic the
+// recovery-attribution fix below addresses. Fixed 2026-11-07.
+async function abandonedCartHasRecentOrder(phone, since) {
   if (!phone || phone.length !== 10) return false;
   try {
-    const res = await shopifyREST(`/orders.json?phone=${encodeURIComponent('+91' + phone)}&status=any&limit=1`);
-    return (res?.orders || []).length > 0;
+    const orders = await ordersByPhone(phone, 5);
+    const sinceMs = since ? new Date(since).getTime() : 0;
+    return orders.some(o => new Date(o.created_at).getTime() > sinceMs);
   } catch { return false; }
 }
 
@@ -30315,14 +30518,19 @@ async function abandonedCartTouchCron() {
     for (const cart of touch2Due) {
       const phone = String(cart.phone || '').replace(/\D/g, '').slice(-10);
       if (!phone || phone.length !== 10) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch2_sent: true, wa_touch2_skipped: 'no_phone' } }); continue; }
-      if (await abandonedCartHasRecentOrder(phone)) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch2_sent: true, wa_touch2_skipped: 'already_ordered' } }); continue; }
+      if (await abandonedCartHasRecentOrder(phone, cart.received_at)) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch2_sent: true, wa_touch2_skipped: 'already_ordered' } }); continue; }
 
       const total = parseFloat(cart.total || 0);
       const discountAmt = 150;
       const afterDiscount = Math.max(0, total - discountAmt);
-      const buyUrl = waAbandonedCartDiscountUrl(cart.checkout_url || 'https://croscrow.com');
+      const buyUrl = waAbandonedCartDiscountUrl(cart.checkout_url || 'https://croscrow.com', 'abandoned_cart_touch2');
+      // This template (like abandoned_cart_recovery itself) was approved on
+      // Meta under "en_US", not sendWACloudTemplate's "en" default — every
+      // Touch2 send since this was built failed with "(#132001) Template
+      // name does not exist in the translation" as a result. Found + fixed
+      // 2026-11-07.
       const result = await sendWACloudTemplate({
-        phone10: phone, templateName: WA_TPL.ABANDONED_CART_TOUCH2,
+        phone10: phone, templateName: WA_TPL.ABANDONED_CART_TOUCH2, lang: WA_CLOUD_LANG,
         headerImageUrl: cart.items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE,
         bodyParams: [String(Math.round(total)), String(Math.round(afterDiscount)), 'COMEBACK', String(discountAmt)],
         urlButtonParam: waCloudUrlSuffix(buyUrl, cart.cart_id ? `?mrid=${cart.cart_id}` : ''),
@@ -30346,14 +30554,16 @@ async function abandonedCartTouchCron() {
     for (const cart of touch3Due) {
       const phone = String(cart.phone || '').replace(/\D/g, '').slice(-10);
       if (!phone || phone.length !== 10) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch3_sent: true, wa_touch3_skipped: 'no_phone' } }); continue; }
-      if (await abandonedCartHasRecentOrder(phone)) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch3_sent: true, wa_touch3_skipped: 'already_ordered' } }); continue; }
+      if (await abandonedCartHasRecentOrder(phone, cart.received_at)) { await mdb.collection('abandoned_carts').updateOne({ _id: cart._id }, { $set: { wa_touch3_sent: true, wa_touch3_skipped: 'already_ordered' } }); continue; }
 
       const total = parseFloat(cart.total || 0);
       const discountAmt = 150;
       const afterDiscount = Math.max(0, total - discountAmt);
-      const buyUrl = waAbandonedCartDiscountUrl(cart.checkout_url || 'https://croscrow.com');
+      const buyUrl = waAbandonedCartDiscountUrl(cart.checkout_url || 'https://croscrow.com', 'abandoned_cart_touch3');
+      // Same Meta-language mismatch as Touch2 above — this template is also
+      // approved under "en_US", not the "en" default. Fixed 2026-11-07.
       const result = await sendWACloudTemplate({
-        phone10: phone, templateName: WA_TPL.ABANDONED_CART_TOUCH3,
+        phone10: phone, templateName: WA_TPL.ABANDONED_CART_TOUCH3, lang: WA_CLOUD_LANG,
         headerImageUrl: cart.items?.[0]?.image_url || WA_CLOUD_FALLBACK_IMAGE,
         bodyParams: [String(Math.round(total)), String(Math.round(afterDiscount)), 'COMEBACK', String(discountAmt)],
         urlButtonParam: waCloudUrlSuffix(buyUrl, cart.cart_id ? `?mrid=${cart.cart_id}` : ''),
@@ -30395,8 +30605,27 @@ async function markRecoveredAbandonedCarts() {
         continue;
       }
       try {
-        const res = await shopifyREST(`/orders.json?phone=${encodeURIComponent('+91' + phone)}&status=any&limit=5&fields=id,name,total_price,created_at`);
-        const orders = (res?.orders || []).filter(o => new Date(o.created_at).getTime() > new Date(cart.received_at || cart.first_seen || 0).getTime());
+        // Attribution was previously "any order this phone EVER placed,
+        // any time after the cart was abandoned" — no upper bound, and
+        // using cart.received_at (abandonment time) rather than when the
+        // WA nudge actually went out. That credited the campaign for
+        // completely unrelated purchases (a different session, days or
+        // weeks later, sometimes even before any message was sent), which
+        // is what inflated recovery rate to 85%+ and revenue-recovered to
+        // levels no real WA/email abandoned-cart flow hits. Real
+        // attribution needs both: (1) the order has to come after the
+        // nudge was actually sent, not just after the cart was abandoned,
+        // and (2) a bounded window afterward — 7 days is the standard
+        // last-touch attribution window for cart-recovery flows (Klaviyo/
+        // Yotpo default to 5-7d), not "forever". Fixed 2026-11-07.
+        const ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+        const attributionStart = new Date(cart.wa_sent_at || cart.received_at || cart.first_seen || 0).getTime();
+        const attributionEnd = attributionStart + ATTRIBUTION_WINDOW_MS;
+        const phoneOrders = await ordersByPhone(phone, 5);
+        const orders = phoneOrders.filter(o => {
+          const t = new Date(o.created_at).getTime();
+          return t > attributionStart && t <= attributionEnd;
+        });
         if (orders.length) {
           const order = orders[0];
           await mdb.collection('abandoned_carts').updateOne(
@@ -30474,8 +30703,10 @@ async function markWASendConversions() {
         continue;
       }
       try {
-        const res = await shopifyREST(`/orders.json?phone=${encodeURIComponent('+91' + phone)}&status=any&limit=5&fields=id,name,total_price,created_at`);
-        const orders = (res?.orders || []).filter(o => {
+        // Same Shopify-has-no-phone-filter fix as abandoned-cart recovery
+        // above — see ordersByPhone's comment. Fixed 2026-11-07.
+        const phoneOrders = await ordersByPhone(phone, 5);
+        const orders = phoneOrders.filter(o => {
           const t = new Date(o.created_at).getTime();
           return t > sentAtMs && t <= windowEndMs;
         });
@@ -30615,11 +30846,15 @@ app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' })
     }
 
     const now = new Date().toISOString();
+    // Used to also store the full raw webhook payload (~8KB each, re-written
+    // on every re-fire) — nothing ever read it back (the WA sends and the
+    // marketing-overview dashboard both only use the structured fields
+    // below; the latter even explicitly projects `raw` out of its own
+    // query), so it was pure dead weight. Dropped 2026-11-07.
     const doc = {
       email, phone, name, cart_id: cartId, checkout_url: checkoutUrl,
       currency, total, items,
       source:      req.headers['x-source'] || payload.source || 'gokwik',
-      raw:         payload,
       received_at: now,
       status:      'open',
     };
