@@ -81,6 +81,7 @@ html,body{background:var(--bg);color:var(--text);font-family:'Jost',-apple-syste
     <a class="back-link" id="back-link" href="/diwali-soiree/admin">&larr; Admin</a>
     <b>Diwali Soiree 2.0</b>
     <span>Gate Check-In</span>
+    <span id="entry-counter" style="display:none;margin-top:10px;font-size:11px;letter-spacing:.1em;color:var(--gold-bright)"></span>
   </div>
 
   <div id="login-screen">
@@ -127,6 +128,7 @@ function doLogin() {
     .then(function (d) {
       if (!d.token) throw new Error(d.error || 'Login failed');
       setToken(d.token);
+      loadEntryCounter();
       if (pendingIdFromQr) { showResultScreen(); lookupTicket(pendingIdFromQr); pendingIdFromQr = null; }
       else showScanScreen();
     })
@@ -216,8 +218,33 @@ function renderTicketCard(t) {
         (isUsed ? '<br><br>Entered at ' + new Date(t.checked_in_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '') +
       '</div>' +
     '</div>' +
-    (isUsed ? '' : '<button class="btn-mark" id="mark-btn" onclick="markEntered(\'' + t.ticket_id + '\')">Mark Entered</button>') +
+    (isUsed ? '<button class="btn-scan-next" id="undo-btn" style="color:var(--err);border-color:var(--err)" onclick="undoEntered(\'' + t.ticket_id + '\')">Wrong Ticket — Undo Entry</button>' : '<button class="btn-mark" id="mark-btn" onclick="markEntered(\'' + t.ticket_id + '\')">Mark Entered</button>') +
     '<button class="btn-scan-next" onclick="showScanScreen()">Scan Next</button>';
+}
+
+function undoEntered(ticketId) {
+  if (!confirm('Undo this entry? Only do this if the wrong ticket was marked by mistake.')) return;
+  var btn = document.getElementById('undo-btn');
+  btn.disabled = true; btn.textContent = 'Undoing…';
+  fetch('/admin/diwali-tickets/' + encodeURIComponent(ticketId) + '/undo-check-in', { method: 'POST', headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) throw new Error(d.error);
+      renderTicketCard(d.ticket);
+      loadEntryCounter();
+    })
+    .catch(function (e) { alert(e.message || 'Failed to undo'); btn.disabled = false; btn.textContent = 'Wrong Ticket — Undo Entry'; });
+}
+
+function loadEntryCounter() {
+  fetch('/event/diwali-soiree/entry-stats', { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) return;
+      var el = document.getElementById('entry-counter');
+      el.textContent = d.entered + ' / ' + d.capacity + ' entered';
+      el.style.display = 'block';
+    }).catch(function () {});
 }
 
 function renderResult(opts) {
@@ -238,6 +265,7 @@ function markEntered(ticketId) {
     .then(function (d) {
       if (d.error) throw new Error(d.error);
       renderTicketCard(d.ticket);
+      loadEntryCounter();
     })
     .catch(function (e) { alert(e.message || 'Failed to mark entered'); btn.disabled = false; btn.textContent = 'Mark Entered'; });
 }
@@ -254,12 +282,16 @@ function showLoginScreen(msg) {
 
 (function () {
   if (getToken()) {
+    loadEntryCounter();
     if (pendingIdFromQr) { showResultScreen(); lookupTicket(pendingIdFromQr); pendingIdFromQr = null; }
     else showScanScreen();
   } else {
     document.getElementById('login-screen').style.display = 'flex';
   }
 })();
+// Keeps the counter fresh even if this bouncer's own phone isn't the one
+// scanning for a while (another gate's scans still show up here).
+setInterval(function () { if (getToken()) loadEntryCounter(); }, 30000);
 </script>
 </body>
 </html>

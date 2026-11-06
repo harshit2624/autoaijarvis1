@@ -17565,16 +17565,62 @@ app.get('/admin/diwali-tickets/lookup/:ticket_id', diwaliGateAuth, async (req, r
 // silently overwrite the original entry time.
 app.post('/admin/diwali-tickets/:ticket_id/check-in', diwaliGateAuth, async (req, res) => {
   try {
+    const now = new Date().toISOString();
+    // findOneAndUpdate with checked_in:{$ne:true} in the filter, not a
+    // separate findOne-then-updateOne — two gates scanning the same QR
+    // within the same instant could both read checked_in:false before
+    // either write landed under the old read-then-write version, letting
+    // a ticket get marked (and a guest walked in) twice. Only one request
+    // can ever win this filter now; the loser falls through to the
+    // existing ticket's real already_used state. Fixed 2026-11-07 (event
+    // eve) ahead of multi-gate use tomorrow.
+    const result = await mdb.collection('event_tickets').findOneAndUpdate(
+      { ticket_id: req.params.ticket_id, event: 'diwali_soiree_2026', checked_in: { $ne: true } },
+      { $set: { checked_in: true, checked_in_at: now, checked_in_by: req.staffUsername || 'admin' } },
+      { returnDocument: 'after' }
+    );
+    if (result) {
+      auditLog('admin', 'diwali_ticket_checked_in', req.params.ticket_id, { name: result.name, tier: result.tier });
+      return res.json({ success: true, checked_in_at: now, ticket: { ...result, _id: undefined } });
+    }
+    // Didn't win the filter — either already checked in, or doesn't exist.
     const t = await mdb.collection('event_tickets').findOne({ ticket_id: req.params.ticket_id, event: 'diwali_soiree_2026' });
     if (!t) return res.status(404).json({ error: 'Ticket not found.' });
-    if (t.checked_in) return res.json({ already_used: true, checked_in_at: t.checked_in_at, ticket: { ...t, _id: undefined } });
-    const now = new Date().toISOString();
-    await mdb.collection('event_tickets').updateOne(
-      { ticket_id: req.params.ticket_id },
-      { $set: { checked_in: true, checked_in_at: now, checked_in_by: req.staffUsername || 'admin' } }
+    res.json({ already_used: true, checked_in_at: t.checked_in_at, ticket: { ...t, _id: undefined } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /admin/diwali-tickets/:ticket_id/undo-check-in — corrects a mis-scan
+// (wrong ticket tapped, duplicate QR shown by mistake, etc.) without
+// needing a DB console. Deliberately simple — no confirmation PIN, since
+// gate staff need this fast and the blast radius is just one ticket's own
+// entry flag.
+app.post('/admin/diwali-tickets/:ticket_id/undo-check-in', diwaliGateAuth, async (req, res) => {
+  try {
+    const result = await mdb.collection('event_tickets').findOneAndUpdate(
+      { ticket_id: req.params.ticket_id, event: 'diwali_soiree_2026' },
+      { $set: { checked_in: false }, $unset: { checked_in_at: '', checked_in_by: '' } },
+      { returnDocument: 'after' }
     );
-    auditLog('admin', 'diwali_ticket_checked_in', req.params.ticket_id, { name: t.name, tier: t.tier });
-    res.json({ success: true, checked_in_at: now, ticket: { ...t, _id: undefined, checked_in: true, checked_in_at: now } });
+    if (!result) return res.status(404).json({ error: 'Ticket not found.' });
+    auditLog('admin', 'diwali_ticket_undo_checked_in', req.params.ticket_id, { name: result.name });
+    res.json({ success: true, ticket: { ...result, _id: undefined } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /event/diwali-soiree/entry-stats — live entered-vs-capacity count for
+// the gate scanner's own header, so bouncers can self-monitor the door
+// without needing a second device open on the admin dashboard.
+app.get('/event/diwali-soiree/entry-stats', diwaliGateAuth, async (req, res) => {
+  try {
+    const tickets = await mdb.collection('event_tickets').find({ event: 'diwali_soiree_2026', status: { $ne: 'cancelled' } }, { projection: { pax: 1, tier: 1, checked_in: 1, _id: 0 } }).toArray();
+    let entered = 0, totalPax = 0;
+    for (const t of tickets) {
+      const pax = t.pax != null ? t.pax : (t.tier === 'group' ? 5 : 1);
+      totalPax += pax;
+      if (t.checked_in) entered += pax;
+    }
+    res.json({ entered, sold: totalPax, capacity: DIWALI_EVENT_CAPACITY });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
