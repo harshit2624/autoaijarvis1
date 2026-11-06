@@ -17416,6 +17416,61 @@ async function diwaliRouletteExpiryReminderCron() {
 }
 setInterval(diwaliRouletteExpiryReminderCron, 2 * 60 * 1000);
 
+// ── One-time: event-day reminder blast to every ticket holder ─────────────
+// Fires once the clock crosses 12:00 PM IST on 2026-11-07 (event day),
+// gated by a DB flag claimed BEFORE the send loop starts — a server
+// restart (Render redeploys routinely) or two overlapping cron ticks can
+// never fire this twice and double-send to every guest. Dedupes by phone
+// so a guest with 2+ tickets only gets one message. 12:00 PM IST = 06:30
+// UTC — using a fixed UTC epoch target instead of locale/timezone string
+// parsing, which is the fragile way to get this wrong.
+const DIWALI_EVENT_DAY_REMINDER_TARGET_UTC_MS = Date.UTC(2026, 10, 7, 6, 30, 0); // 2026-11-07 12:00 IST
+async function diwaliEventDayReminderCron() {
+  if (!mdb) return;
+  try {
+    if (Date.now() < DIWALI_EVENT_DAY_REMINDER_TARGET_UTC_MS) return; // not time yet
+    const flag = await mdb.collection('wa_bot_settings').findOne({ _id: 'diwali_event_day_reminder_sent' });
+    if (flag?.done) return; // already fired (or already claimed by another tick)
+
+    // Claim first — nothing below can run twice even if this tick and the
+    // next one overlap.
+    await mdb.collection('wa_bot_settings').updateOne(
+      { _id: 'diwali_event_day_reminder_sent' },
+      { $set: { done: true, started_at: new Date().toISOString() } },
+      { upsert: true }
+    );
+
+    const tickets = await mdb.collection('event_tickets').find(
+      { event: 'diwali_soiree_2026', status: { $ne: 'cancelled' } },
+      { projection: { phone: 1, name: 1, _id: 0 } }
+    ).toArray();
+
+    const byPhone = new Map();
+    for (const t of tickets) {
+      const phone = String(t.phone || '').replace(/\D/g, '').slice(-10);
+      if (phone.length === 10 && !byPhone.has(phone)) byPhone.set(phone, t.name || 'there');
+    }
+
+    console.log(`📲 Diwali event-day reminder: sending to ${byPhone.size} unique ticket holders...`);
+    let sent = 0, failed = 0;
+    for (const [phone, name] of byPhone) {
+      try {
+        const result = await sendWACloudTemplate({
+          phone10: phone,
+          templateName: WA_TPL.DIWALI_EVENT_DAY_REMINDER,
+          headerImageUrl: `${SERVER_URL}/diwali-uploads/thankyou-square.png`,
+          bodyParams: [name],
+        });
+        if (result.sent) sent++; else failed++;
+      } catch (e) { failed++; }
+      await new Promise(r => setTimeout(r, 300)); // gentle pacing, stay well under WA rate limits
+    }
+    console.log(`📲 Diwali event-day reminder done — sent: ${sent}, failed: ${failed} of ${byPhone.size}`);
+    waAdminAlert(`🪔 Diwali event-day reminder blast complete — sent: ${sent}, failed: ${failed} (${byPhone.size} unique guests). If "failed" is high, the Meta template likely isn't approved yet.`, 'event_ticket').catch(() => {});
+  } catch (e) { console.error('diwaliEventDayReminderCron error:', e.message); }
+}
+setInterval(diwaliEventDayReminderCron, 5 * 60 * 1000);
+
 // GET /admin/diwali-tickets/analytics — page views, live visitors (active
 // in the last 60s), and how many started filling the booking form
 app.get('/admin/diwali-tickets/analytics', diwaliGateAuth, async (req, res) => {
@@ -29515,6 +29570,7 @@ const WA_TPL = {
   DEMO_PITCH_CTA: 'demo_pitch_cta_v1',
   DIWALI_SOIREE_RECOVERY: 'diwali_soiree_recovery',
   DIWALI_TICKET_CONFIRMATION: 'diwali_ticket_confirmation',
+  DIWALI_EVENT_DAY_REMINDER: 'diwali_event_day_reminder',
 };
 
 // ── Cloud API session messages (free-form text/image, no template needed) ──
