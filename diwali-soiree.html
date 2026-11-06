@@ -89,11 +89,14 @@ img{display:block;max-width:100%}
 .expect-label span{font-size:10.5px;color:var(--body);letter-spacing:.04em}
 
 /* ── Urgency counter — live seats-sold vs. capacity ────────────── */
-.capacity-bar{margin:14px 0 18px;padding:14px 16px;border:1px solid var(--border-strong);border-radius:10px;background:rgba(176,138,75,.10)}
-.capacity-bar__top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
-.capacity-bar__label{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-bright);font-weight:700}
-.capacity-bar__count{font-family:'Bodoni Moda',serif;font-size:15px;color:var(--text);font-variant-numeric:tabular-nums}
-.capacity-bar__count--over{color:#e0536a;font-weight:700}
+.capacity-bar{margin:14px 0 18px;padding:16px;border:1px solid var(--border-strong);border-radius:10px;background:rgba(176,138,75,.10);text-align:center}
+.capacity-bar__label{display:block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-bright);font-weight:700}
+.capacity-bar__count{display:block;margin:8px 0 10px;font-family:'Bodoni Moda',serif;font-size:26px;line-height:1;color:var(--text);font-variant-numeric:tabular-nums}
+.capacity-bar__sold{color:var(--text)}
+.capacity-bar__count--over .capacity-bar__sold{color:#e0536a}
+.capacity-bar__slash{color:var(--muted);margin:0 2px;font-weight:400}
+.capacity-bar__cap{color:var(--gold-bright)}
+.capacity-bar__suffix{font-family:'Manrope',sans-serif;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-left:6px;vertical-align:middle}
 .capacity-bar__track{width:100%;height:5px;border-radius:3px;background:var(--border);overflow:hidden}
 .capacity-bar__fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--gold),var(--gold-bright));width:0%;transition:width .6s ease}
 
@@ -355,9 +358,9 @@ img{display:block;max-width:100%}
     <div class="section-sub">Spaces are limited</div>
 
     <div class="capacity-bar" id="capacity-bar" hidden>
-      <div class="capacity-bar__top">
-        <span class="capacity-bar__label" id="capacity-bar-label">Filling up fast</span>
-        <span class="capacity-bar__count" id="capacity-bar-count"></span>
+      <span class="capacity-bar__label" id="capacity-bar-label">Filling up fast</span>
+      <div class="capacity-bar__count" id="capacity-bar-count">
+        <span class="capacity-bar__sold" id="capacity-bar-sold"></span><span class="capacity-bar__slash">/</span><span class="capacity-bar__cap" id="capacity-bar-cap"></span><span class="capacity-bar__suffix"> booked</span>
       </div>
       <div class="capacity-bar__track"><div class="capacity-bar__fill" id="capacity-bar-fill"></div></div>
     </div>
@@ -514,7 +517,8 @@ function _loadCapacity() {
     var overCapacity = sold > d.capacity;
     var bar = document.getElementById('capacity-bar');
     var countEl = document.getElementById('capacity-bar-count');
-    countEl.textContent = sold + '/' + d.capacity + ' booked';
+    document.getElementById('capacity-bar-sold').textContent = sold;
+    document.getElementById('capacity-bar-cap').textContent = d.capacity;
     countEl.classList.toggle('capacity-bar__count--over', overCapacity);
     document.getElementById('capacity-bar-fill').style.width = pct + '%';
     var labelEl = document.getElementById('capacity-bar-label');
