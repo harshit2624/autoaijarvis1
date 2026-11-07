@@ -218,7 +218,7 @@ function renderTicketCard(t) {
         (isUsed ? '<br><br>Entered at ' + new Date(t.checked_in_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '') +
       '</div>' +
     '</div>' +
-    (isUsed ? '<button class="btn-scan-next" id="undo-btn" style="color:var(--err);border-color:var(--err)" onclick="undoEntered(\'' + t.ticket_id + '\')">Wrong Ticket — Undo Entry</button>' : '<button class="btn-mark" id="mark-btn" onclick="markEntered(\'' + t.ticket_id + '\')">Mark Entered</button>') +
+    (isUsed ? '<button class="btn-scan-next" id="undo-btn" style="color:var(--err);border-color:var(--err)" onclick="undoEntered(\'' + t.ticket_id + '\')">Already Used — Undo Entry</button>' : '<button class="btn-mark" id="mark-btn" onclick="markEntered(\'' + t.ticket_id + '\')">Mark Entered</button>') +
     '<button class="btn-scan-next" onclick="showScanScreen()">Scan Next</button>';
 }
 
