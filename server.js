@@ -29542,7 +29542,7 @@ const WA_TPL = {
   VENDOR_TICKET_FOLLOWUP: 'vendor_ticket_followup',
   STAFF_ALERT: 'staff_notification',
   ORDER_AWAITING_CONFIRMATION: 'order_awaiting_confirmation_v3', // the "pay ₹99" ask after Confirm is tapped — 2 body params (order name, COD amount due)
-  ORDER_HIGH_RISK_ADVANCE: 'order_high_risk_advance_v1', // submitted to Meta 2026-10-23, PENDING — once approved, use as the outside-session-window fallback for adminSendHighRiskAdvanceAsk. 3 body params (order name, total, COD due).
+  ORDER_HIGH_RISK_ADVANCE: 'order_high_risk_advance_v1', // APPROVED on Meta (en_US) as of 2026-11-10 — used by adminSendHighRiskAdvanceAsk as the outside-session-window fallback. 3 body params (order name, total, COD due), URL button param is the bare order slug.
   ORDER_CONFIRM_CANCEL: 'order_confirm_cancel',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v3',
@@ -29998,15 +29998,14 @@ async function adminResendAwaitingConfirmation(order, phoneOverride) {
 // until the advance lands or it dispatches, instead of the normal tracking
 // view every other order gets.
 //
-// Delivery: a single free-form Cloud API session message with a real
-// tappable "Pay ₹99 Now" button (ctaUrl, via waProxySock — same mechanism
-// as the tap-Confirm reply) — valid without Meta template approval as
-// long as we're within 24h of the customer's last inbound message, which
-// holds for the normal case (admin flags an order shortly after the
-// customer confirmed/messaged). A Meta template with this exact copy is
-// also being submitted for approval, as a fallback for when the session
-// window has closed — once approved, pending orders outside the window
-// can use it instead.
+// Delivery: tries a free-form Cloud API session message first (real
+// tappable "Pay ₹99 Now" button, nicer UX, free) — only valid within 24h
+// of the customer's last inbound message. If that's closed (customer
+// never replied to the confirmation message, which is exactly the
+// high-risk case this is for), falls back to the Meta-approved
+// order_high_risk_advance_v1 template (APPROVED, en_US), which can be
+// delivered outside the session window. Without this fallback, a
+// high-risk customer who never replies could never be reached at all.
 async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
   const phone10 = _resendPhone(order, phoneOverride);
   if (!phone10) throw new Error('No valid WhatsApp number on this order — give one explicitly (e.g. "...on 9876543210").');
@@ -30022,12 +30021,36 @@ async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
     { upsert: true }
   );
 
-  const _F = '```';
-  const richText = `${_F}\n▪ C R O S C R O W ▪\nHIGH RISK ─ ACTION NEEDED\n────────────────\nORDER  ${order.name}\n\nOur shipping partner shows multiple rejected COD orders on this number/address in the past.\n\nTo confirm this order isn't a mistake or fake order, please pay ₹99 now.\n\nTOTAL    ₹${total.toFixed(0)}\nPAY NOW  ₹99\nCOD DUE  ₹${codDue.toFixed(0)}\n\nYou'll receive courier tracking shortly after paying ₹99.\n\nUSE BUTTON BELOW TO PAY\n${_F}`;
-  await waProxySock.sendMessage(`91${phone10}@s.whatsapp.net`, { text: richText, ctaUrl: { displayText: 'Pay ₹99 Now', url: trackUrl } });
+  const sessionResult = await waCloudSendSession(`${phone10}@s.whatsapp.net`, {
+    ctaUrl: { displayText: 'Pay ₹99 Now', url: trackUrl },
+    text: `▪ C R O S C R O W ▪\nHIGH RISK ─ ACTION NEEDED\n────────────────\nORDER  ${order.name}\n\nOur shipping partner shows multiple rejected COD orders on this number/address in the past.\n\nTo confirm this order isn't a mistake or fake order, please pay ₹99 now.\n\nTOTAL    ₹${total.toFixed(0)}\nPAY NOW  ₹99\nCOD DUE  ₹${codDue.toFixed(0)}\n\nYou'll receive courier tracking shortly after paying ₹99.`,
+  }).catch(() => ({ sent: false, reason: 'session_send_error' }));
 
-  auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10 });
-  return { sent: true };
+  if (sessionResult.sent) {
+    auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10, via: 'session' });
+    return { sent: true, via: 'session' };
+  }
+
+  const templateResult = await sendWACloudTemplate({
+    phone10,
+    templateName: WA_TPL.ORDER_HIGH_RISK_ADVANCE,
+    lang: 'en_US',
+    bodyParams: [order.name, total.toFixed(0), codDue.toFixed(0)],
+    urlButtonParam: orderSlug,
+  });
+
+  if (templateResult.sent) {
+    auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10, via: 'template' });
+    return { sent: true, via: 'template' };
+  }
+
+  // Last resort: Baileys plain text, no button — session + template both failed.
+  await waProxySock.sendMessage(`91${phone10}@s.whatsapp.net`, {
+    text: `HIGH RISK — ACTION NEEDED\nOrder ${order.name}\n\nOur shipping partner shows multiple rejected COD orders on this number/address. To confirm this order isn't a mistake, please pay ₹99 now: ${trackUrl}\n\nTOTAL ₹${total.toFixed(0)} · PAY NOW ₹99 · COD DUE ₹${codDue.toFixed(0)}`,
+  }).catch(() => {});
+
+  auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10, via: 'baileys_fallback', template_fail_reason: templateResult.reason });
+  return { sent: true, via: 'baileys_fallback' };
 }
 
 // Full customer-facing template demo flow — order confirmation through
