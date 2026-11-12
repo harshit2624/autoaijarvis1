@@ -23826,46 +23826,68 @@ app.post("/track/request", async (req, res) => {
     }
 
     const now = new Date();
-    const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = String(Math.floor(Math.random() * 9000) + 1000);
-    const request_id = `RR-${datePart}-${rand}`;
+    const cleanImageUrls = Array.isArray(image_urls) ? image_urls.filter(u => typeof u === 'string' && (u.startsWith('/rr-uploads/') || u.startsWith('/uploads/'))) : [];
 
-    const doc = {
-      request_id,
-      shopify_order_id: String(shopify_order_id),
-      order_name: order_name || '',
-      customer_email: customer_email.toLowerCase().trim(),
-      customer_name: customer_name || '',
-      customer_phone: customer_phone || '',
-      type,
-      items,
-      reason,
-      status: 'pending',
-      vendor_name: vendor_name || '',
-      created_at: now.toISOString(),
-      admin_note: '',
-      vendor_note: '',
-      payment_id: payment_id || null,
-      razorpay_order_id: razorpay_order_id || null,
-      fee_paid: payment_id ? true : (isFeeWaived ? 'waived' : false),
-      image_urls: Array.isArray(image_urls) ? image_urls.filter(u => typeof u === 'string' && (u.startsWith('/rr-uploads/') || u.startsWith('/uploads/'))) : [],
-      ...(isFeeWaived && { fee_waived_by_admin: true }),
-      ...(isForceEnabled && { force_enabled_by_admin: true }),
-      history: [{ status: 'pending', at: now.toISOString(), note: 'Request submitted by customer', source: 'customer' }],
-    };
+    // Items may span more than one vendor (e.g. an exchange touching 3
+    // products from 3 different sellers) — a single return_requests doc
+    // can't straddle vendors (vendor_name is a single string field, and
+    // every vendor-portal query filters strictly on it), so group by each
+    // item's own `vendor` field and create one doc per vendor, mirroring
+    // adminCreateRR's grouping. Older clients that don't tag items with
+    // `vendor` fall back to the single top-level vendor_name as before.
+    const byVendor = new Map();
+    for (const it of items) {
+      const v = (it.vendor || vendor_name || '').trim();
+      if (!byVendor.has(v)) byVendor.set(v, []);
+      byVendor.get(v).push(it);
+    }
+    const groups = [...byVendor.entries()];
 
-    await mdb.collection('return_requests').insertOne(doc);
+    const created = [];
+    for (let i = 0; i < groups.length; i++) {
+      const [vendorName, vendorItems] = groups[i];
+      const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+      const rand = String(Math.floor(Math.random() * 9000) + 1000);
+      const request_id = groups.length > 1 ? `RR-${datePart}-${rand}-${i}` : `RR-${datePart}-${rand}`;
+
+      const doc = {
+        request_id,
+        shopify_order_id: String(shopify_order_id),
+        order_name: order_name || '',
+        customer_email: customer_email.toLowerCase().trim(),
+        customer_name: customer_name || '',
+        customer_phone: customer_phone || '',
+        type,
+        items: vendorItems,
+        reason,
+        status: 'pending',
+        vendor_name: vendorName,
+        created_at: now.toISOString(),
+        admin_note: '',
+        vendor_note: '',
+        payment_id: payment_id || null,
+        razorpay_order_id: razorpay_order_id || null,
+        fee_paid: payment_id ? true : (isFeeWaived ? 'waived' : false),
+        image_urls: cleanImageUrls,
+        ...(isFeeWaived && { fee_waived_by_admin: true }),
+        ...(isForceEnabled && { force_enabled_by_admin: true }),
+        history: [{ status: 'pending', at: now.toISOString(), note: 'Request submitted by customer', source: 'customer' }],
+      };
+
+      await mdb.collection('return_requests').insertOne(doc);
+      sendRREmail('submitted', doc).catch(() => {});
+      sendRRWANotif(doc, 'request_received').catch(() => {});
+      sendRRVendorWANotif(doc, 'request_received').catch(() => {});
+      waAdminAlert(`📦 New ${type === 'exchange' ? 'exchange' : 'return'} request — ${order_name || shopify_order_id}\nVendor: ${vendorName || '(none)'}\nCustomer: ${customer_name || customer_email}\nItems: ${vendorItems.map(x => x.title).join(', ')}\nRequest ID: ${request_id}`).catch(() => {});
+      created.push(doc);
+    }
 
     // Create indexes on first use
     mdb.collection('return_requests').createIndex({ request_id: 1 }, { unique: true }).catch(() => {});
     mdb.collection('return_requests').createIndex({ vendor_name: 1, status: 1 }).catch(() => {});
     mdb.collection('return_requests').createIndex({ customer_email: 1 }).catch(() => {});
 
-    sendRREmail('submitted', doc).catch(() => {});
-    sendRRWANotif(doc, 'request_received').catch(() => {});
-    sendRRVendorWANotif(doc, 'request_received').catch(() => {});
-
-    res.json({ success: true, request_id });
+    res.json({ success: true, request_id: created[0].request_id, request_ids: created.map(d => d.request_id) });
   } catch (err) {
     console.error("❌ /track/request:", err.message);
     res.status(500).json({ error: err.message });

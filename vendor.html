@@ -5906,6 +5906,7 @@
     const [loginLoad,setLoginLoad]=useState(false);
     const [sidebarOpen,setSidebarOpen]= useState(false);
     const [brandingIncomplete, setBrandingIncomplete] = useState(null); // null=unknown, true/false once checked
+    const [pendingReturnsCount, setPendingReturnsCount] = useState(0); // drives the red-circle count badge on the Returns nav item
     const [brandingNudgeDismissed, setBrandingNudgeDismissed] = useState(()=>sessionStorage.getItem('branding_nudge_dismissed')==='1');
     const [theme, setTheme] = useState(()=>{
       const old = localStorage.getItem('vendor_theme'); // legacy 'light'/'dark'
@@ -5938,6 +5939,21 @@
         .then(r=>r.json())
         .then(d=>{ if (d && d.collection_found !== false) setBrandingIncomplete(!d.is_complete); })
         .catch(()=>{});
+    },[auth?.token]);
+    // Pending-returns count badge on the sidebar Returns item — polled
+    // independently of whichever view is open so it's visible even when
+    // the vendor never clicks into Returns.
+    useEffect(()=>{
+      if (!auth) { setPendingReturnsCount(0); return; }
+      const loadPendingReturns = () => {
+        fetch(`${API}/vendor/return-requests?status=pending`,{headers:{Authorization:`Bearer ${auth.token}`}})
+          .then(r=>r.json())
+          .then(d=>setPendingReturnsCount((d.requests||[]).length))
+          .catch(()=>{});
+      };
+      loadPendingReturns();
+      const t = setInterval(loadPendingReturns, 60000);
+      return () => clearInterval(t);
     },[auth?.token]);
     useEffect(()=>{
       const root = document.body.style;
@@ -6082,7 +6098,7 @@
       { id:'settlements', icon:'₹', label:'Settlements',  section:'finance' },
       { id:'wallet',      icon:'◉', label:'Wallet',       section:'finance' },
       { id:'shopifysync', icon:'🔄', label:'Shopify Sync',  section:'finance' },
-      { id:'returns',     icon:'↩', label:'Returns',      section:'main' },
+      { id:'returns',     icon:'↩', label:'Returns',      section:'main', countBadge: pendingReturnsCount },
       { id:'support',     icon:'💬', label:'Support Chats', section:'main' },
       { id:'profile',     icon:'⚙', label:'My Profile',   section:'finance' },
       { id:'agreement',   icon:'📋', label:'Agreement',     section:'finance' },
@@ -6130,6 +6146,7 @@
                     <span className="nav-icon"><Icon name={n.id} mode={brand.icon_style} fallback={n.icon} size={16}/></span>{n.label}
                     {n.pill && <span style={{marginLeft:'auto',fontSize:9,fontWeight:800,letterSpacing:0.5,color:'var(--green)',background:'var(--green-dim)',padding:'2px 7px',borderRadius:99}}>{n.pill}</span>}
                     {n.badge && <span style={{marginLeft:n.pill?6:'auto',fontSize:12}} title="Missing required branding">❗</span>}
+                    {!!n.countBadge && <span style={{marginLeft:'auto',background:'var(--red)',color:'#fff',borderRadius:999,minWidth:18,height:18,fontSize:10,fontWeight:700,display:'inline-flex',alignItems:'center',justifyContent:'center',padding:'0 5px'}} title={`${n.countBadge} pending return/exchange request${n.countBadge!==1?'s':''}`}>{n.countBadge}</span>}
                   </button>
                 ))}
               </div>

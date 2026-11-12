@@ -1630,6 +1630,7 @@ async function submitRequest(paymentId, rzOrderId) {
     return {
       title: it.title, variant_title: it.variant_title || '', quantity: sel.qty,
       sku: it.sku || '', price: it.price, image_url: it.image_url || null,
+      vendor: it.vendor || '',
       ...(flowType === 'exchange' && sel.exchange_for ? { exchange_for: sel.exchange_for, exchange_size_label: sel.exchange_for, exchange_variant_id: sel.exchange_variant_id || null } : {})
     };
   });
@@ -1659,7 +1660,7 @@ async function submitRequest(paymentId, rzOrderId) {
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Submission failed');
-    showSuccessScreen(d.request_id);
+    showSuccessScreen((d.request_ids && d.request_ids.length > 1) ? d.request_ids.join(', ') : d.request_id);
   } catch(e) {
     alert(e.message);
     btn.disabled = false;
