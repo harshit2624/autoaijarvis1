@@ -30866,7 +30866,11 @@ const WA_ATTRIBUTION_WINDOW_DAYS = 7;
 // (e.g. a new carousel template) instead of trusting Meta's tag.
 const WA_CAMPAIGN_TEMPLATE_NAMES = [
   'abandoned_cart_recovery', 'abandoned_cart_recovery_touch2', 'abandoned_cart_recovery_touch3',
-  'win_back_flat500_v2',
+  // win_back_flat500_v2 retired 2026-11-14 (no longer sent — see
+  // WIN_BACK_FLAT500's comment) but left in this list so past sends still
+  // show up historically on the dashboard instead of vanishing. New sends
+  // go out as win_back_gift_order_v2/v1 instead.
+  'win_back_flat500_v2', 'win_back_gift_order_v2', 'win_back_gift_order_v1',
   'diwali_soiree_recovery',
   'back_in_stock_v1',
   'weekend_bestsellers_carousel_v1', 'weekend_bestsellers_carousel_v2',
