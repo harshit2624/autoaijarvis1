@@ -2228,8 +2228,13 @@ app.post("/webhooks/orders", (req, res) => {
             } catch (e) { console.error('Prepaid confirmed-card send error:', e.message); }
           })();
         } else if (isPartiallyPaid) {
-          // Customer already paid advance (₹99) via Shopify at checkout — auto-confirm
-          await OM.upsert(sid, { stage: 'confirmed', payment_type: 'advance', advance_paid: 99, confirmation_paid: true, updated_at: now });
+          // Customer already paid an advance via Shopify at checkout — auto-confirm.
+          // The advance amount isn't always ₹99: GoKwik charges a different partial
+          // amount for some risky pincodes/profiles, so derive it from the order's
+          // own totals (total_price - total_outstanding) rather than assuming the
+          // standard ₹99 fee — same derivation already used for the snapshot above.
+          const _advAmt = (() => { const a = parseFloat((parseFloat(payload.total_price || 0) - parseFloat(payload.total_outstanding || 0)).toFixed(2)); return a > 0 ? a : CONFIRM_FEE; })();
+          await OM.upsert(sid, { stage: 'confirmed', payment_type: 'advance', advance_paid: _advAmt, confirmation_paid: true, updated_at: now });
           const vendors_ = [...new Set((payload.line_items || []).map(li => li.vendor).filter(Boolean))];
           for (const vendor of vendors_) {
             await OVS.upsert(sid, vendor, { stage: 'confirmed', updated_at: now, stage_started_at: nowMs, warning_sent: 0, penalty_triggered: 0 });
@@ -2253,8 +2258,9 @@ app.post("/webhooks/orders", (req, res) => {
               const _orderSlugAdv = encodeURIComponent(String(payload.name).replace(/^#/, ''));
               const _Fadv2 = '```';
               const _trackUrlAdv = `${SERVER_URL}/o/${_orderSlugAdv}`;
-              const _msgAdv = `${_Fadv2}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _totalAdv - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrlAdv}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fadv2}`;
-              const _cloudTplAdv = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: await confirmationHeaderImage(_enrichedAdv, WA_CLOUD_FALLBACK_IMAGE), bodyParams: [payload.name, _itemsListAdv, _addressLineAdv, '99', Math.max(0, _totalAdv - 99).toFixed(0)], urlButtonParam: `${_orderSlugAdv}&contact=na` };
+              const _advAmtAdv = _advAmt; // computed above from total_price - total_outstanding, falls back to CONFIRM_FEE
+              const _msgAdv = `${_Fadv2}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹${_advAmtAdv.toFixed(0)} received\nCOD    ₹${Math.max(0, _totalAdv - _advAmtAdv).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrlAdv}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fadv2}`;
+              const _cloudTplAdv = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: await confirmationHeaderImage(_enrichedAdv, WA_CLOUD_FALLBACK_IMAGE), bodyParams: [payload.name, _itemsListAdv, _addressLineAdv, _advAmtAdv.toFixed(0), Math.max(0, _totalAdv - _advAmtAdv).toFixed(0)], urlButtonParam: `${_orderSlugAdv}&contact=na` };
               await waSendToCustomer(_advPhone, _msgAdv, _cloudTplAdv).catch(e => console.error('WA advance-confirmed (create) error:', e.message));
               await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
               console.log(`📲 Advance confirmed card sent immediately for ${payload.name}`);
@@ -2504,10 +2510,14 @@ app.post("/webhooks/orders", (req, res) => {
                 _dedupKey = 'confirmed_tag';
               } else if (_isPartiallyPaid) {
                 // The real "your order is confirmed, packing now" — fires
-                // once the ₹99 advance actually lands, independent of
-                // whether the pay-ask already went out.
-                _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹99 received\nCOD    ₹${Math.max(0, _total - 99).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
-                _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: _confImage, bodyParams: [payload.name, _itemsList2, _addressLine2, '99', Math.max(0, _total - 99).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
+                // once the advance actually lands, independent of whether
+                // the pay-ask already went out. The advance isn't always
+                // ₹99 (GoKwik can charge a different partial amount for
+                // risky pincodes/profiles), so derive the real figure from
+                // the order's own totals instead of assuming CONFIRM_FEE.
+                const _advAmt2 = (() => { const a = parseFloat((_total - parseFloat(payload.total_outstanding || 0)).toFixed(2)); return a > 0 ? a : CONFIRM_FEE; })();
+                _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹${_advAmt2.toFixed(0)} received\nCOD    ₹${Math.max(0, _total - _advAmt2).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
+                _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: _confImage, bodyParams: [payload.name, _itemsList2, _addressLine2, _advAmt2.toFixed(0), Math.max(0, _total - _advAmt2).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
                 _dedupKey = 'confirmed_tag';
               } else if (WA_PARTIAL_AWAITING_ENABLED) {
                 // Tag present but no ₹99 yet, and our own WA Confirm handler
@@ -29991,8 +30001,12 @@ async function adminResendOrderConfirmation(order, phoneOverride) {
     if (!result.sent) throw new Error(result.reason);
     return { sent: true, kind: 'prepaid' };
   } else {
-    const remaining = Math.max(0, total - CONFIRM_FEE);
-    const result = await sendWACloudTemplate({ phone10, templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: confImage, bodyParams: [order.name, itemsList, addressLine, String(CONFIRM_FEE), remaining.toFixed(0)], urlButtonParam: `${orderSlug}&contact=na` });
+    // advance_paid is the order's actually-recorded advance, not always
+    // CONFIRM_FEE — GoKwik charges a different partial amount for some
+    // risky pincodes/profiles, so use that real figure when we have it.
+    const advAmt = parseFloat(meta.advance_paid || 0) || CONFIRM_FEE;
+    const remaining = Math.max(0, total - advAmt);
+    const result = await sendWACloudTemplate({ phone10, templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: confImage, bodyParams: [order.name, itemsList, addressLine, String(advAmt), remaining.toFixed(0)], urlButtonParam: `${orderSlug}&contact=na` });
     if (!result.sent) throw new Error(result.reason);
     return { sent: true, kind: 'cod_advance' };
   }
