@@ -18981,16 +18981,15 @@ async function deliveryFollowupCron() {
         if (phone.length !== 10) continue;
 
         const name = order.shipping_address?.first_name || order.customer?.first_name || 'there';
-        const msg = `Hey ${name}! 🎁\n\nWe decided to do something special for you.\n\nAs a thank-you for shopping with CROSCROW, we've got a surprise —\n\n*FLAT ₹500 OFF* on your next order 🛍️\n\nUse code: *FLAT500* at checkout\n👉 croscrow.com\n\nValid for 30 days. Don't let it go to waste! 😊\n\n— Team CROSCROW`;
+        const msg = `Hey ${name} 👋\n\nWe hope you're loving your order ${order.name}! ❤️\n\nAs a thank you for shopping with CROSCROW, here's a special reward for your next purchase.\n\nGIFT : *₹500 OFF*\nCODE : *FLAT500*\n\nCan't wait to see what you pick next. 🚀`;
 
         // Marketing category — Cloud API template first, Baileys image+caption
-        // fallback only if the template send fails.
-        // headerImageUrl dropped — win_back_flat500_v2's approved header is
-        // TEXT ("A Gift For You"), not an image; sending an image header
-        // against a TEXT-header template gets rejected by Meta outright
-        // (confirmed live), which meant every real win-back send was
-        // silently falling through to the rare Baileys fallback path below.
-        const cloudResult = await sendWACloudTemplate({ phone10: phone, templateName: WA_TPL.WIN_BACK_FLAT500, bodyParams: [name] });
+        // fallback only if the template send fails. win_back_gift_order_v2's
+        // approved header IS an image (unlike the retired win_back_flat500_v2,
+        // whose header was TEXT-only — passing an image there got silently
+        // rejected by Meta, see WIN_BACK_FLAT500's history), so headerImageUrl
+        // is required here, not optional.
+        const cloudResult = await sendWACloudTemplate({ phone10: phone, templateName: WA_TPL.WIN_BACK_GIFT_ORDER, headerImageUrl: FLAT500_IMAGE, bodyParams: [name, order.name] });
         if (!cloudResult.sent && waSocket && waConnected) {
           const jid = `91${phone}@s.whatsapp.net`;
           await waSocket.sendMessage(jid, { image: imageBuffer, caption: msg });
@@ -29593,7 +29592,8 @@ const WA_TPL = {
   ORDER_CONFIRM_CANCEL: 'order_confirm_cancel',
   ORDER_CONFIRMED_PREPAID: 'order_confirmed_prepaid_v2',
   ORDER_CONFIRMED_COD_ADVANCE: 'order_confirmed_cod_advance_v3',
-  WIN_BACK_FLAT500: 'win_back_flat500_v2',
+  WIN_BACK_FLAT500: 'win_back_flat500_v2', // retired 2026-11-14 — deliveryFollowupCron now uses WIN_BACK_GIFT_ORDER instead. Left here (not deleted) only in case anything else ever needs to reference it.
+  WIN_BACK_GIFT_ORDER: 'win_back_gift_order_v2', // submitted to Meta 2026-11-14, PENDING — image header + "Hope you're loving your order {{2}}" copy + Shop Now button (UTM: utm_source=whatsapp&utm_medium=winback_gift&utm_campaign=flat500_giftorder, registered as a GoKwik auto-discount rule for code flat500). 2 body params: name, order name.
   // Vendor-facing (all UTILITY, uploaded fresh — no _v2 needed, never deleted)
   VENDOR_RR_REQUEST_RECEIVED: 'vendor_rr_request_received',
   VENDOR_RR_APPROVED: 'vendor_rr_approved',
@@ -30130,7 +30130,7 @@ async function sendDemoFlowToPhone(phone10) {
     { name: WA_TPL.RR_PICKED_UP, bodyParams: [orderName, itemLine], urlButtonParam: `${orderSlug}&contact=na` },
     { name: WA_TPL.RR_QUALITY_CHECK, bodyParams: [orderName, itemLine] },
     { name: WA_TPL.RR_EXCHANGE_SENT, bodyParams: [orderName, 'Delhivery'], urlButtonParam: `${orderSlug}&contact=na` },
-    { name: WA_TPL.WIN_BACK_FLAT500, bodyParams: ['Farhan'] },
+    { name: WA_TPL.WIN_BACK_GIFT_ORDER, headerImageUrl: 'https://i.ibb.co/0p9BkzY7/USE-CODE-FLAT500.png', bodyParams: ['Farhan', orderName] },
     { name: WA_TPL.DEMO_PITCH_CTA },
   ];
 
