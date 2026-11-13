@@ -3752,6 +3752,21 @@
         .then(r=>r.json()).then(d=>{ if(d.error) setMetaOvErr(d.error); else setMetaOv(d.overview||null); }).catch(e=>setMetaOvErr(e.message));
     },[token, aPeriod]);
 
+    // WA Campaign Performance — same idea as the Meta section above, but for
+    // WhatsApp marketing sends (abandoned-cart touches, win-back, etc.) —
+    // real order outcomes (converted/revenue/discount given) matched by
+    // phone+time-window, same backend used by the dedicated WA Marketing tab.
+    const [waCampPerf, setWaCampPerf] = useState(null);
+    const [waCampLoading, setWaCampLoading] = useState(true);
+    useEffect(()=>{
+      setWaCampLoading(true);
+      const from = aPeriod ? aPeriod.from : '2020-01-01';
+      const to   = aPeriod ? aPeriod.to   : isoToday();
+      const days = Math.min(180, Math.max(1, Math.ceil((new Date(to) - new Date(from)) / 86400000) || 30));
+      fetch(`${API}/admin/wa-marketing/campaigns?days=${days}`,{headers:{Authorization:`Bearer ${token}`}})
+        .then(r=>r.json()).then(d=>{ if(!d.error) setWaCampPerf(d); }).catch(()=>setWaCampPerf(null)).finally(()=>setWaCampLoading(false));
+    },[token, aPeriod]);
+
     // Product photos for Top Selling Products — batch-fetched from the
     // existing product-images endpoint once topProducts is known.
     const [productImages, setProductImages] = useState({});
@@ -4567,6 +4582,66 @@
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── WA Campaign Performance — same idea as Meta Campaign
+            Performance above, but for WhatsApp marketing sends. Real order
+            outcomes (converted/revenue/discount given) matched by phone +
+            7-day window, same backend as the dedicated WA Marketing tab's
+            campaigns table (/admin/wa-marketing/campaigns). ── */}
+        {!waCampLoading && waCampPerf?.campaigns?.length > 0 && (() => {
+          const camps = [...waCampPerf.campaigns].sort((a,b)=>b.revenue-a.revenue);
+          const maxRev = Math.max(1, ...camps.map(c=>c.revenue));
+          return (
+            <div className="dash-section">
+              <div className="dash-section-hdr">
+                <div>
+                  <div className="dash-section-title">💬 WA Campaign Performance</div>
+                  <div className="dash-section-meta">{periodLabel} · real order outcomes matched to each WhatsApp send by phone + time window</div>
+                </div>
+                <div className="dash-section-tag" style={{background:'rgba(52,211,153,.12)',color:'#34d399',border:'1px solid rgba(52,211,153,.25)'}}>{waFmtMoney(waCampPerf.totals.revenue)} REVENUE</div>
+              </div>
+              <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:14}}>
+                <div style={{flex:'1 1 140px',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Sent</div>
+                  <div style={{fontSize:20,fontWeight:900,color:'var(--text)'}}>{waCampPerf.totals.sent}</div>
+                </div>
+                <div style={{flex:'1 1 140px',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Converted</div>
+                  <div style={{fontSize:20,fontWeight:900,color:'var(--text)'}}>{waCampPerf.totals.converted}</div>
+                </div>
+                <div style={{flex:'1 1 140px',background:'rgba(52,211,153,.07)',border:'1px solid rgba(52,211,153,.2)',borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Revenue</div>
+                  <div style={{fontSize:20,fontWeight:900,color:'#34d399'}}>{waFmtMoney(waCampPerf.totals.revenue)}</div>
+                </div>
+                <div style={{flex:'1 1 140px',background:'rgba(251,146,60,.07)',border:'1px solid rgba(251,146,60,.2)',borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Discount Given</div>
+                  <div style={{fontSize:20,fontWeight:900,color:'var(--orange)'}}>{waFmtMoney(waCampPerf.totals.discount_given)}</div>
+                </div>
+                <div style={{flex:'1 1 140px',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Spend / ROAS</div>
+                  <div style={{fontSize:20,fontWeight:900,color:'var(--text)'}}>{waCampPerf.pricing_configured ? waFmtMoney(waCampPerf.totals.spend) : '—'} {waCampPerf.totals.roas!=null && <span style={{fontSize:13,color:waCampPerf.totals.roas>=3?'#34d399':waCampPerf.totals.roas>=1?'var(--yellow)':'var(--red)'}}>({waCampPerf.totals.roas}x)</span>}</div>
+                </div>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
+                {camps.map(c=>(
+                  <div key={c.name} style={{border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px',background:'var(--bg-card2)'}}>
+                    <div style={{fontSize:12,fontWeight:700,color:'var(--text)',marginBottom:8,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={WA_CAMPAIGN_LABELS[c.name]||c.name}>{WA_CAMPAIGN_LABELS[c.name]||c.name}</div>
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                      <div style={{flex:1,height:6,background:'var(--bg-hover)',borderRadius:3,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:(100*c.revenue/maxRev)+'%',background:'var(--indigo)',borderRadius:3}}/>
+                      </div>
+                      <span style={{fontSize:13,fontWeight:800,color:'var(--text)',flexShrink:0}}>{waFmtMoney(c.revenue)}</span>
+                    </div>
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)'}}>
+                      <span>{c.sent} sent · {c.converted} converted ({c.conversion_rate}%)</span>
+                      <span style={{color:'var(--orange)'}}>{c.discount_given ? `-${waFmtMoney(c.discount_given)} disc.` : 'no discount'}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           );
@@ -13755,6 +13830,7 @@
                       <th style={{padding:'6px 8px',fontWeight:500}}>Conv. Rate</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Avg Order</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Revenue</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Discount Given</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Spend</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>ROAS</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Last Sent</th>
@@ -13785,12 +13861,13 @@
                             <span style={{color:'var(--text)',fontWeight:700}}>{waFmtMoney(c.revenue)}</span>
                           </div>
                         </td>
+                        <td style={{padding:'9px 8px',color:'var(--orange)'}}>{c.discount_given ? waFmtMoney(c.discount_given) : '—'}</td>
                         <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{campaignData.pricing_configured ? waFmtMoney(c.spend) : '—'}</td>
                         <td style={{padding:'9px 8px',fontWeight:700,color:c.roas==null?'var(--text-muted)':c.roas>=3?'var(--green)':c.roas>=1?'var(--yellow)':'var(--red)'}}>{c.roas!=null ? `${c.roas}x` : '—'}</td>
                         <td style={{padding:'9px 8px',color:'var(--text-muted)',fontSize:10.5}}>{waTimeAgo(c.last_sent_at)}</td>
                       </tr>
                     ))}
-                    {!campaignData.campaigns.length && <tr><td colSpan="11" style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}>No marketing sends in this range yet</td></tr>}
+                    {!campaignData.campaigns.length && <tr><td colSpan="12" style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}>No marketing sends in this range yet</td></tr>}
                   </tbody>
                 </table>
               </div>

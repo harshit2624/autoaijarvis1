@@ -1767,7 +1767,7 @@ async function ordersByPhone(phone10, limit = 5) {
       query($q: String!, $n: Int!) {
         customers(first: 1, query: $q) {
           edges { node { orders(first: $n, sortKey: CREATED_AT, reverse: true) {
-            edges { node { name createdAt totalPriceSet { shopMoney { amount } } } }
+            edges { node { name createdAt totalPriceSet { shopMoney { amount } } totalDiscountsSet { shopMoney { amount } } } }
           } } }
         }
       }
@@ -1778,6 +1778,7 @@ async function ordersByPhone(phone10, limit = 5) {
       name: e.node.name,
       created_at: e.node.createdAt,
       total_price: e.node.totalPriceSet?.shopMoney?.amount || '0',
+      total_discounts: e.node.totalDiscountsSet?.shopMoney?.amount || '0',
     }));
   } catch (e) {
     console.error('ordersByPhone error:', e.message);
@@ -30916,7 +30917,7 @@ async function markWASendConversions() {
           const order = orders[0];
           await mdb.collection('wa_send_log').updateOne(
             { _id: row._id },
-            { $set: { converted: true, converted_order_name: order.name, converted_amount: parseFloat(order.total_price || 0), converted_at: order.created_at, conversion_checked_at: checkedAt } }
+            { $set: { converted: true, converted_order_name: order.name, converted_amount: parseFloat(order.total_price || 0), converted_discount: parseFloat(order.total_discounts || 0), converted_at: order.created_at, conversion_checked_at: checkedAt } }
           );
         } else if (now >= windowEndMs) {
           // Window closed with nothing found — final answer, stop re-checking.
@@ -30975,12 +30976,12 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
     const pricing = await getWAPricingSettings();
     const rows = await mdb.collection('wa_send_log').find(
       { kind: 'template', name: { $in: WA_CAMPAIGN_TEMPLATE_NAMES }, sent_at: { $gte: cutoff } },
-      { projection: { name: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, sent_at: 1, category: 1 } }
+      { projection: { name: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, converted_discount: 1, sent_at: 1, category: 1 } }
     ).toArray();
 
     const byName = {};
     for (const r of rows) {
-      if (!byName[r.name]) byName[r.name] = { name: r.name, sent: 0, delivered: 0, read: 0, failed: 0, converted: 0, revenue: 0, billable_sent: 0, last_sent_at: r.sent_at };
+      if (!byName[r.name]) byName[r.name] = { name: r.name, sent: 0, delivered: 0, read: 0, failed: 0, converted: 0, revenue: 0, discount_given: 0, billable_sent: 0, last_sent_at: r.sent_at };
       const c = byName[r.name];
       c.sent++;
       if (r.status === 'failed') c.failed++;
@@ -30994,7 +30995,7 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
       // category campaign gets added here).
       if (['delivered', 'read'].includes(r.delivery_status)) { c.delivered++; c.billable_sent++; }
       if (r.delivery_status === 'read') c.read++;
-      if (r.converted) { c.converted++; c.revenue += (r.converted_amount || 0); }
+      if (r.converted) { c.converted++; c.revenue += (r.converted_amount || 0); c.discount_given += (r.converted_discount || 0); }
       if (r.sent_at > c.last_sent_at) c.last_sent_at = r.sent_at;
     }
     const campaigns = Object.values(byName).map(c => {
@@ -31005,6 +31006,7 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
         read_rate: c.sent ? +(100 * c.read / c.sent).toFixed(1) : 0,
         conversion_rate: c.sent ? +(100 * c.converted / c.sent).toFixed(1) : 0,
         avg_order: c.converted ? +(c.revenue / c.converted).toFixed(0) : 0,
+        discount_given: +c.discount_given.toFixed(2),
         spend: +spend.toFixed(2),
         roas: (pricing.marketing_rate && spend > 0) ? +(c.revenue / spend).toFixed(2) : null,
       };
@@ -31012,8 +31014,9 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
 
     const totals = campaigns.reduce((t, c) => ({
       sent: t.sent + c.sent, delivered: t.delivered + c.delivered, read: t.read + c.read,
-      converted: t.converted + c.converted, revenue: t.revenue + c.revenue, spend: t.spend + c.spend,
-    }), { sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0, spend: 0 });
+      converted: t.converted + c.converted, revenue: t.revenue + c.revenue, discount_given: t.discount_given + c.discount_given, spend: t.spend + c.spend,
+    }), { sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0, discount_given: 0, spend: 0 });
+    totals.discount_given = +totals.discount_given.toFixed(2);
     totals.roas = (pricing.marketing_rate && totals.spend > 0) ? +(totals.revenue / totals.spend).toFixed(2) : null;
 
     res.json({ days, campaigns, totals, pricing_configured: !!pricing.marketing_rate });
