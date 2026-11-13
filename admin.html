@@ -4617,9 +4617,10 @@
                   <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Revenue</div>
                   <div style={{fontSize:20,fontWeight:900,color:'#34d399'}}>{waFmtMoney(waCampPerf.totals.revenue)}</div>
                 </div>
-                <div style={{flex:'1 1 140px',background:'rgba(251,146,60,.07)',border:'1px solid rgba(251,146,60,.2)',borderRadius:10,padding:'12px 14px'}}>
-                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Discount Given</div>
-                  <div style={{fontSize:20,fontWeight:900,color:'var(--orange)'}}>{waFmtMoney(waCampPerf.totals.discount_given)}</div>
+                <div style={{flex:'1 1 170px',background:'rgba(251,146,60,.07)',border:'1px solid rgba(251,146,60,.2)',borderRadius:10,padding:'12px 14px'}} title="Offered = what the message promised per converted order. Claimed = only counted when the order's own discount code actually matches — most converted orders used a different, unrelated code.">
+                  <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Discount Offered / Claimed</div>
+                  <div style={{fontSize:16,fontWeight:900,color:'var(--text-dim)'}}>{waFmtMoney(waCampPerf.totals.discount_offered)}</div>
+                  <div style={{fontSize:16,fontWeight:900,color:'var(--orange)'}}>{waFmtMoney(waCampPerf.totals.discount_claimed)}</div>
                 </div>
                 <div style={{flex:'1 1 140px',background:'var(--bg-hover)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
                   <div style={{fontSize:9,letterSpacing:0.5,textTransform:'uppercase',color:'var(--text-muted)',marginBottom:4}}>Spend / ROAS</div>
@@ -4638,7 +4639,7 @@
                     </div>
                     <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)'}}>
                       <span>{c.sent} sent · {c.converted} converted ({c.conversion_rate}%)</span>
-                      <span style={{color:'var(--orange)'}}>{c.discount_given ? `-${waFmtMoney(c.discount_given)} disc.` : 'no discount'}</span>
+                      <span style={{color:'var(--orange)'}}>{c.discount_claimed ? `-${waFmtMoney(c.discount_claimed)} claimed` : (c.discount_offered ? `${waFmtMoney(c.discount_offered)} offered, 0 claimed` : 'no discount')}</span>
                     </div>
                   </div>
                 ))}
@@ -13830,7 +13831,7 @@
                       <th style={{padding:'6px 8px',fontWeight:500}}>Conv. Rate</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Avg Order</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Revenue</th>
-                      <th style={{padding:'6px 8px',fontWeight:500}}>Discount Given</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}} title="Offered = fixed amount the message promised, once per converted order. Claimed = only counted when the order's own discount code actually matches this campaign's code — most 'converted' orders used an unrelated code.">Disc. Offered / Claimed</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Spend</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>ROAS</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Last Sent</th>
@@ -13861,7 +13862,10 @@
                             <span style={{color:'var(--text)',fontWeight:700}}>{waFmtMoney(c.revenue)}</span>
                           </div>
                         </td>
-                        <td style={{padding:'9px 8px',color:'var(--orange)'}}>{c.discount_given ? waFmtMoney(c.discount_given) : '—'}</td>
+                        <td style={{padding:'9px 8px'}}>
+                          <div style={{fontSize:11,color:'var(--text-dim)'}}>{c.discount_offered ? waFmtMoney(c.discount_offered) : '—'} <span style={{color:'var(--text-muted)'}}>offered</span></div>
+                          <div style={{fontSize:11,color:'var(--orange)',fontWeight:700}}>{c.discount_claimed ? waFmtMoney(c.discount_claimed) : '—'} <span style={{color:'var(--text-muted)',fontWeight:400}}>claimed</span></div>
+                        </td>
                         <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{campaignData.pricing_configured ? waFmtMoney(c.spend) : '—'}</td>
                         <td style={{padding:'9px 8px',fontWeight:700,color:c.roas==null?'var(--text-muted)':c.roas>=3?'var(--green)':c.roas>=1?'var(--yellow)':'var(--red)'}}>{c.roas!=null ? `${c.roas}x` : '—'}</td>
                         <td style={{padding:'9px 8px',color:'var(--text-muted)',fontSize:10.5}}>{waTimeAgo(c.last_sent_at)}</td>

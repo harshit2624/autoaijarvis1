@@ -1767,7 +1767,7 @@ async function ordersByPhone(phone10, limit = 5) {
       query($q: String!, $n: Int!) {
         customers(first: 1, query: $q) {
           edges { node { orders(first: $n, sortKey: CREATED_AT, reverse: true) {
-            edges { node { name createdAt totalPriceSet { shopMoney { amount } } totalDiscountsSet { shopMoney { amount } } } }
+            edges { node { name createdAt totalPriceSet { shopMoney { amount } } totalDiscountsSet { shopMoney { amount } } discountCodes } }
           } } }
         }
       }
@@ -1779,6 +1779,7 @@ async function ordersByPhone(phone10, limit = 5) {
       created_at: e.node.createdAt,
       total_price: e.node.totalPriceSet?.shopMoney?.amount || '0',
       total_discounts: e.node.totalDiscountsSet?.shopMoney?.amount || '0',
+      discount_codes: (e.node.discountCodes || []).map(c => String(c).toLowerCase()),
     }));
   } catch (e) {
     console.error('ordersByPhone error:', e.message);
@@ -30876,6 +30877,35 @@ const WA_CAMPAIGN_TEMPLATE_NAMES = [
   'back_in_stock_v1',
   'weekend_bestsellers_carousel_v1', 'weekend_bestsellers_carousel_v2',
 ];
+
+// Which discount code each campaign's own message actually promises, and
+// the fixed amount it promises (matches the real Shopify price_rule — see
+// waAbandonedCartDiscountUrl's discountAmt=150 for comeback, the `flat500`
+// price rule for win-back). A campaign not listed here offers no discount
+// (diwali_soiree_recovery, back_in_stock_v1, the bestseller carousels are
+// plain nudges, not coupon sends).
+//
+// This exists because "converted" is phone+7-day-window matching, NOT a
+// UTM-click/coupon-use match — the matched order can carry ANY discount
+// code, including ones totally unrelated to this WA send (a separate
+// influencer code, PREPAID-DISCOUNT, a different promo entirely). Summing
+// that order's total_discounts as "discount given by this campaign" wildly
+// overstates it — confirmed live: orders counted as COMEBACK conversions
+// actually used codes like `flat1000` (₹1000) and `AMANX2243` (₹1721.65),
+// nothing to do with the ₹150 COMEBACK offer. So two numbers are tracked:
+//   - offered: the fixed amount the message promised, once per converted
+//     order, regardless of what the customer actually used at checkout.
+//   - claimed: only counted when the matched order's own discount code
+//     genuinely matches this campaign's code — the real, defensible figure.
+const WA_CAMPAIGN_DISCOUNT = {
+  abandoned_cart_recovery: { code: 'comeback', offer: 150 },
+  abandoned_cart_recovery_touch2: { code: 'comeback', offer: 150 },
+  abandoned_cart_recovery_touch3: { code: 'comeback', offer: 150 },
+  win_back_flat500_v2: { code: 'flat500', offer: 500 },
+  win_back_gift_order_v1: { code: 'flat500', offer: 500 },
+  win_back_gift_order_v2: { code: 'flat500', offer: 500 },
+};
+
 async function markWASendConversions() {
   if (!mdb) return;
   try {
@@ -30915,9 +30945,17 @@ async function markWASendConversions() {
         });
         if (orders.length) {
           const order = orders[0];
+          const campaignDisc = WA_CAMPAIGN_DISCOUNT[row.name];
+          const codeMatched = !!campaignDisc && (order.discount_codes || []).includes(campaignDisc.code);
           await mdb.collection('wa_send_log').updateOne(
             { _id: row._id },
-            { $set: { converted: true, converted_order_name: order.name, converted_amount: parseFloat(order.total_price || 0), converted_discount: parseFloat(order.total_discounts || 0), converted_at: order.created_at, conversion_checked_at: checkedAt } }
+            { $set: {
+              converted: true, converted_order_name: order.name, converted_amount: parseFloat(order.total_price || 0),
+              converted_discount_offered: campaignDisc ? campaignDisc.offer : 0,
+              converted_discount_claimed: codeMatched ? parseFloat(order.total_discounts || 0) : 0,
+              converted_discount_code_matched: codeMatched,
+              converted_at: order.created_at, conversion_checked_at: checkedAt,
+            } }
           );
         } else if (now >= windowEndMs) {
           // Window closed with nothing found — final answer, stop re-checking.
@@ -30976,12 +31014,12 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
     const pricing = await getWAPricingSettings();
     const rows = await mdb.collection('wa_send_log').find(
       { kind: 'template', name: { $in: WA_CAMPAIGN_TEMPLATE_NAMES }, sent_at: { $gte: cutoff } },
-      { projection: { name: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, converted_discount: 1, sent_at: 1, category: 1 } }
+      { projection: { name: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, converted_discount_offered: 1, converted_discount_claimed: 1, sent_at: 1, category: 1 } }
     ).toArray();
 
     const byName = {};
     for (const r of rows) {
-      if (!byName[r.name]) byName[r.name] = { name: r.name, sent: 0, delivered: 0, read: 0, failed: 0, converted: 0, revenue: 0, discount_given: 0, billable_sent: 0, last_sent_at: r.sent_at };
+      if (!byName[r.name]) byName[r.name] = { name: r.name, sent: 0, delivered: 0, read: 0, failed: 0, converted: 0, revenue: 0, discount_offered: 0, discount_claimed: 0, billable_sent: 0, last_sent_at: r.sent_at };
       const c = byName[r.name];
       c.sent++;
       if (r.status === 'failed') c.failed++;
@@ -30995,7 +31033,16 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
       // category campaign gets added here).
       if (['delivered', 'read'].includes(r.delivery_status)) { c.delivered++; c.billable_sent++; }
       if (r.delivery_status === 'read') c.read++;
-      if (r.converted) { c.converted++; c.revenue += (r.converted_amount || 0); c.discount_given += (r.converted_discount || 0); }
+      if (r.converted) {
+        c.converted++; c.revenue += (r.converted_amount || 0);
+        // offered: the fixed amount the message promised, once per
+        // converted order, regardless of what was actually used at
+        // checkout. claimed: only counted when the matched order's own
+        // discount code genuinely matches this campaign's code — see
+        // WA_CAMPAIGN_DISCOUNT's comment for why these can differ a lot.
+        c.discount_offered += (r.converted_discount_offered || 0);
+        c.discount_claimed += (r.converted_discount_claimed || 0);
+      }
       if (r.sent_at > c.last_sent_at) c.last_sent_at = r.sent_at;
     }
     const campaigns = Object.values(byName).map(c => {
@@ -31006,7 +31053,8 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
         read_rate: c.sent ? +(100 * c.read / c.sent).toFixed(1) : 0,
         conversion_rate: c.sent ? +(100 * c.converted / c.sent).toFixed(1) : 0,
         avg_order: c.converted ? +(c.revenue / c.converted).toFixed(0) : 0,
-        discount_given: +c.discount_given.toFixed(2),
+        discount_offered: +c.discount_offered.toFixed(2),
+        discount_claimed: +c.discount_claimed.toFixed(2),
         spend: +spend.toFixed(2),
         roas: (pricing.marketing_rate && spend > 0) ? +(c.revenue / spend).toFixed(2) : null,
       };
@@ -31014,9 +31062,12 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
 
     const totals = campaigns.reduce((t, c) => ({
       sent: t.sent + c.sent, delivered: t.delivered + c.delivered, read: t.read + c.read,
-      converted: t.converted + c.converted, revenue: t.revenue + c.revenue, discount_given: t.discount_given + c.discount_given, spend: t.spend + c.spend,
-    }), { sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0, discount_given: 0, spend: 0 });
-    totals.discount_given = +totals.discount_given.toFixed(2);
+      converted: t.converted + c.converted, revenue: t.revenue + c.revenue,
+      discount_offered: t.discount_offered + c.discount_offered, discount_claimed: t.discount_claimed + c.discount_claimed,
+      spend: t.spend + c.spend,
+    }), { sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0, discount_offered: 0, discount_claimed: 0, spend: 0 });
+    totals.discount_offered = +totals.discount_offered.toFixed(2);
+    totals.discount_claimed = +totals.discount_claimed.toFixed(2);
     totals.roas = (pricing.marketing_rate && totals.spend > 0) ? +(totals.revenue / totals.spend).toFixed(2) : null;
 
     res.json({ days, campaigns, totals, pricing_configured: !!pricing.marketing_rate });
