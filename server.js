@@ -1203,6 +1203,21 @@ async function applyTagMappings(orderId, tags, financialStatus) {
   const mappings = await mdb.collection('tag_mappings').find({}, { projection: { _id: 0 } }).sort({ priority: 1, id: 1 }).toArray();
   let winner = null;
   for (const m of mappings) {
+    // A 'partial' tag (GoKwik's generic COD/UPI tracking tags, "99
+    // PARTIAL✅", etc.) is never a real signal on a genuinely prepaid
+    // order — it just means the order passed through that checkout path,
+    // not that only part was paid. Previously the first-matching tag by
+    // priority still won even when it was one of these on a prepaid
+    // order, and the downgrade-guard below then bailed the WHOLE function
+    // out rather than falling through to a real confirming tag also
+    // present on the same order (e.g. "confirmed on call ✅") — leaving
+    // order_meta.stage stuck at 'new' forever with no order_vendor_stage
+    // rows ever created. Confirmed live on #4019: "Gokwik_ppcod_upi"
+    // (priority 41, →partial) outranked "confirmed on call ✅" (priority
+    // 45, →confirmed) despite the order being financial_status=paid.
+    // Skipping 'partial' mappings outright for prepaid orders lets the
+    // loop fall through to whatever tag genuinely applies instead.
+    if (m.stage === 'partial' && payType === 'prepaid') continue;
     const hit = orderTags.find(t => t.toLowerCase() === m.shopify_tag.toLowerCase().trim());
     if (hit) { winner = m; break; }
   }
