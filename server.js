@@ -11623,7 +11623,12 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       // Surface", "Ekart") instead, captured from the AWB-assign step above.
       const realCourier = (partner === 'shiprocket' && result.courierName) ? result.courierName : partner;
       await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: realCourier, stage: 'ready', updated_at: new Date().toISOString() });
-      if (partner === 'delhivery') schedulePickupIfNeeded(creds, creds.pickup_location || 'Primary').catch(() => {});
+      if (partner === 'delhivery') {
+        schedulePickupIfNeeded(creds, creds.pickup_location || 'Primary').catch(() => {});
+        fetchDelhiveryLabelPdf(creds.api_token, result.awb)
+          .then(pdf => sendShipmentLabelToVendorWA(req.vendor, pdf, result.awb, shopifyOrder.name))
+          .catch(e => console.error('Label fetch/send failed:', e.message));
+      }
 
       // Deduct CC Inventory stock for any shipped items that are physically at CROSCROW
       try {
@@ -12166,7 +12171,15 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
     // pushing courier:'shiprocket' silently makes the shipment untrackable
     // forever. Use the real courier Shiprocket assigned instead.
     const realCourier = (partner === 'shiprocket' && result.courierName) ? result.courierName : partner;
-    if (partner === 'delhivery') schedulePickupIfNeeded(creds, warehouseName).catch(() => {});
+    if (partner === 'delhivery') {
+      schedulePickupIfNeeded(creds, warehouseName).catch(() => {});
+      const labelVendor = selected.find(s => s.vendor)?.vendor;
+      if (labelVendor) {
+        fetchDelhiveryLabelPdf(creds.api_token, result.awb)
+          .then(pdf => sendShipmentLabelToVendorWA(labelVendor, pdf, result.awb, shopifyOrder.name))
+          .catch(e => console.error('Label fetch/send failed:', e.message));
+      }
+    }
 
     // Build Shopify fulfillment for exactly the selected line-item quantities
     const byFo = {};
@@ -23280,15 +23293,18 @@ async function schedulePickupIfNeeded(creds, pickupLocationName) {
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const pickupDate = tomorrow.toISOString().slice(0, 10); // YYYY-MM-DD
     const key = { partner: 'delhivery', pickup_location: pickupLocationName, pickup_date: pickupDate };
-    // findOneAndUpdate upsert with returnDocument:'before' — null means this
-    // call just created the doc (first AWB today for this location), a real
-    // doc means one was already requested; either way the count increments.
     const before = await mdb.collection('delhivery_pickup_requests').findOneAndUpdate(
       key,
       { $inc: { package_count: 1 }, $setOnInsert: { created_at: new Date().toISOString() } },
       { upsert: true, returnDocument: 'before' }
     );
-    if (before) return; // already requested for this location+date — nothing more to do
+    // Only skip the actual API call if a PRIOR attempt for this location+date
+    // already SUCCEEDED — a doc that exists but never got `requested: true`
+    // (or whose last attempt failed) means retry. Without this check, a
+    // failed first call (e.g. insufficient Delhivery wallet balance,
+    // confirmed live) would permanently block every later AWB that same day
+    // from ever trying again, even after the underlying issue is fixed.
+    if (before?.requested) return;
 
     const body = new URLSearchParams();
     body.append('format', 'json');
@@ -23304,12 +23320,22 @@ async function schedulePickupIfNeeded(creds, pickupLocationName) {
       body: body.toString(),
     });
     const data = await res.json().catch(() => ({}));
-    await mdb.collection('delhivery_pickup_requests').updateOne(key, { $set: {
-      requested: true, requested_at: new Date().toISOString(),
-      pickup_id: data?.pickup_id || data?.data?.pickup_id || null,
-      response: JSON.stringify(data).slice(0, 500),
-    } });
-    console.log(`📦 Delhivery pickup auto-requested for "${pickupLocationName}" on ${pickupDate}`);
+    if (res.ok) {
+      await mdb.collection('delhivery_pickup_requests').updateOne(key, { $set: {
+        requested: true, requested_at: new Date().toISOString(),
+        pickup_id: data?.pickup_id || data?.data?.pickup_id || null,
+        response: JSON.stringify(data).slice(0, 500),
+      } });
+      console.log(`📦 Delhivery pickup auto-requested for "${pickupLocationName}" on ${pickupDate}`);
+    } else {
+      // Leave `requested` unset so the next AWB for this location today retries.
+      await mdb.collection('delhivery_pickup_requests').updateOne(key, { $set: {
+        last_failed_at: new Date().toISOString(),
+        last_error: JSON.stringify(data).slice(0, 500),
+      } });
+      console.error(`❌ Delhivery pickup request FAILED for "${pickupLocationName}" on ${pickupDate}:`, JSON.stringify(data));
+      await waAdminAlert(`⚠️ Delhivery pickup request failed\nLocation: ${pickupLocationName}\nDate: ${pickupDate}\nError: ${JSON.stringify(data).slice(0, 300)}`).catch(() => {});
+    }
   } catch (e) { console.error('Delhivery pickup scheduling error:', e.message); }
 }
 
@@ -29774,6 +29800,51 @@ async function waCloudUploadMedia(buffer, mimetype = 'image/jpeg') {
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error?.message || `media upload http_${res.status}`);
   return data.id;
+}
+
+// Same upload flow as waCloudUploadMedia but for a document (PDF labels,
+// etc.) — filename/mimetype matter here since WhatsApp shows the real
+// filename to the recipient, unlike the image path's throwaway name.
+async function waCloudUploadDocument(buffer, filename, mimetype = 'application/pdf') {
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('file', new Blob([buffer], { type: mimetype }), filename);
+  const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/media`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}` },
+    body: form,
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error?.message || `media upload http_${res.status}`);
+  return data.id;
+}
+
+// Sends a shipping label PDF to a vendor's WhatsApp as a document message.
+// Session-only (no template) — fine here since this always fires right
+// after that same vendor took an action (creating the shipment), so we're
+// always within the 24h window. Silently no-ops if the vendor has no phone
+// on file or Cloud API isn't configured — label delivery is a convenience,
+// never something that should block or fail the shipment creation itself.
+async function sendShipmentLabelToVendorWA(vendorName, pdfBuffer, awb, orderName) {
+  try {
+    if (!(await waCloudConfigured())) return;
+    const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1 } });
+    const phone10 = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (phone10.length !== 10) return;
+    const mediaId = await waCloudUploadDocument(pdfBuffer, `label-${awb}.pdf`);
+    const to = `91${phone10}`;
+    const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp', to, type: 'document',
+        document: { id: mediaId, filename: `label-${awb}.pdf`, caption: `📦 Shipping label — ${orderName || ''} (AWB ${awb})\nPickup scheduled for tomorrow.` },
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) console.error('Label WA send failed:', JSON.stringify(data.error || data));
+    else console.log(`📲 Label sent to ${vendorName} (${phone10}) — AWB ${awb}`);
+  } catch (e) { console.error('sendShipmentLabelToVendorWA error:', e.message); }
 }
 
 // content mirrors the subset of Baileys' sendMessage content shapes actually
