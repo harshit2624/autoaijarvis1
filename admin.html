@@ -1805,6 +1805,22 @@
       setCreatingShip(false);
     };
 
+    const [labelDownloading, setLabelDownloading] = useState(null); // awb currently downloading
+    const downloadLabel = async (awb, courier) => {
+      setLabelDownloading(awb);
+      try {
+        const r = await fetch(`${API}/admin/orders/${order.shopifyId}/shipping-label?awb=${encodeURIComponent(awb)}&courier=${encodeURIComponent(courier)}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.error || 'Label download failed'); }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `label-${awb}.pdf`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(url), 5000);
+      } catch (e) { setMsg({ type:'error', text: e.message }); }
+      setLabelDownloading(null);
+    };
+
     const postNote = async () => {
       if (!newNote.trim()) return;
       setPostingNote(true);
@@ -2638,9 +2654,16 @@
                   <div style={{fontSize:11,color:'var(--text-muted)',fontWeight:700,marginBottom:8,letterSpacing:1}}>SHIPMENTS CREATED</div>
                   {existingShipments.map((s,i)=>(
                     <div key={i} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:6,padding:'8px 12px',marginBottom:6,fontSize:11}}>
-                      <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
                         <span><strong style={{textTransform:'capitalize'}}>{s.courier}</strong> · <span style={{fontFamily:'monospace',color:'#6366f1'}}>{s.awb}</span></span>
-                        <span style={{color:'var(--text-muted)'}}>{new Date(s.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          {(s.courier||'').toLowerCase()==='delhivery' && (
+                            <button onClick={()=>downloadLabel(s.awb, s.courier)} disabled={labelDownloading===s.awb} style={{fontSize:9.5,fontWeight:700,padding:'3px 8px',borderRadius:5,border:'1px solid var(--border)',background:'var(--bg-hover)',color:'var(--indigo)',cursor:labelDownloading===s.awb?'default':'pointer'}}>
+                              {labelDownloading===s.awb ? 'Downloading…' : '⬇ Label'}
+                            </button>
+                          )}
+                          <span style={{color:'var(--text-muted)'}}>{new Date(s.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+                        </div>
                       </div>
                       <div style={{color:'var(--text-muted)'}}>
                         Pickup: {s.pickup_location} · {s.items.map(it=>`${it.title} ×${it.quantity}${it.vendor?` (${it.vendor})`:''}`).join(', ')}

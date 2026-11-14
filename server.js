@@ -11623,6 +11623,7 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       // Surface", "Ekart") instead, captured from the AWB-assign step above.
       const realCourier = (partner === 'shiprocket' && result.courierName) ? result.courierName : partner;
       await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: realCourier, stage: 'ready', updated_at: new Date().toISOString() });
+      if (partner === 'delhivery') schedulePickupIfNeeded(creds, creds.pickup_location || 'Primary').catch(() => {});
 
       // Deduct CC Inventory stock for any shipped items that are physically at CROSCROW
       try {
@@ -11830,6 +11831,70 @@ app.post("/admin/orders/:shopifyId/rate-check", requirePermission('orders'), asy
     }
     res.json({ rates: [], message: 'Rate check only available for Delhivery' });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Shipping label download (Delhivery only) ────────────────────────────
+// Delhivery's packing_slip endpoint response shape isn't perfectly
+// consistent across accounts/API versions in practice — sometimes a direct
+// PDF, sometimes JSON with a download link, sometimes JSON with inline
+// base64 — so this handles all three rather than assuming one.
+async function fetchDelhiveryLabelPdf(apiToken, awb) {
+  const res = await fetch(`https://track.delhivery.com/api/p/packing_slip?wbns=${encodeURIComponent(awb)}&pdf=true`, {
+    headers: { Authorization: `Token ${apiToken}` },
+  });
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('pdf')) return Buffer.from(await res.arrayBuffer());
+  const text = await res.text();
+  if (text.trim().startsWith('%PDF')) return Buffer.from(text, 'binary');
+  let data;
+  try { data = JSON.parse(text); } catch { throw new Error(`Unexpected response from Delhivery: ${text.slice(0, 200)}`); }
+  const pkg = data.packages?.[0] || data.data?.packages?.[0];
+  const downloadLink = data.pdf_download_link || pkg?.pdf_download_link;
+  if (downloadLink) {
+    const pdfRes = await fetch(downloadLink);
+    return Buffer.from(await pdfRes.arrayBuffer());
+  }
+  const base64Pdf = pkg?.pdf || data.pdf;
+  if (base64Pdf) return Buffer.from(base64Pdf, 'base64');
+  throw new Error(data.rmk || data.error || `No label data in Delhivery response: ${text.slice(0, 200)}`);
+}
+
+// Takes awb/courier directly (query params) rather than re-deriving them
+// from order_vendor_stage — every place in the UI that would show a
+// "Download Label" button already has these two values in hand from the
+// shipment it just rendered (existingShipments / vendor's own shipment
+// list), one order can carry several shipments/AWBs across vendors, and
+// this keeps the endpoint usable from any of those lists without needing
+// to know which specific vendor_name row it came from.
+app.get("/admin/orders/:shopifyId/shipping-label", requirePermission('orders'), async (req, res) => {
+  try {
+    const { awb, courier } = req.query;
+    if (!awb) return res.status(400).json({ error: 'awb required' });
+    if ((courier || '').toLowerCase() !== 'delhivery') return res.status(400).json({ error: `Label download is only available for Delhivery — this shipment is on ${courier || 'an unknown courier'}.` });
+    const credRow = await mdb.collection('global_shipping_creds').findOne({ partner: 'delhivery' });
+    if (!credRow) return res.status(404).json({ error: 'Delhivery not connected. Go to Shipping Settings.' });
+    const creds = JSON.parse(credRow.credentials);
+    const pdf = await fetchDelhiveryLabelPdf(creds.api_token, awb);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="label-${awb}.pdf"`);
+    res.send(pdf);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/vendor/orders/:shopifyId/shipping-label", vendorAuth, async (req, res) => {
+  try {
+    if (await isHiddenFromVendor(req.params.shopifyId, req.vendor)) return res.status(404).json({ error: "Order not found." });
+    const { awb, courier } = req.query;
+    if (!awb) return res.status(400).json({ error: 'awb required' });
+    if ((courier || '').toLowerCase() !== 'delhivery') return res.status(400).json({ error: `Label download is only available for Delhivery — this shipment is on ${courier || 'an unknown courier'}.` });
+    const row = await mdb.collection('vendor_shipping_partners').findOne({ vendor_name: req.vendor, partner: 'delhivery', active: 1 }, { projection: { credentials: 1, _id: 0 } });
+    if (!row) return res.status(404).json({ error: 'Delhivery not connected. Go to Shipping Settings.' });
+    const creds = JSON.parse(row.credentials);
+    const pdf = await fetchDelhiveryLabelPdf(creds.api_token, awb);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="label-${awb}.pdf"`);
+    res.send(pdf);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders'), async (req, res) => {
@@ -12101,6 +12166,7 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
     // pushing courier:'shiprocket' silently makes the shipment untrackable
     // forever. Use the real courier Shiprocket assigned instead.
     const realCourier = (partner === 'shiprocket' && result.courierName) ? result.courierName : partner;
+    if (partner === 'delhivery') schedulePickupIfNeeded(creds, warehouseName).catch(() => {});
 
     // Build Shopify fulfillment for exactly the selected line-item quantities
     const byFo = {};
@@ -23196,6 +23262,55 @@ function resolveDelhiveryReturnInfo(creds, warehouseName) {
     pincode: loc?.pincode || creds.return_pincode  || '',
     phone:   loc?.phone   || creds.return_phone    || '',
   };
+}
+
+// ── Delhivery pickup auto-scheduling ────────────────────────────────────
+// Fired right after every successful Delhivery AWB creation (both the
+// vendor and admin create-shipment routes). Requests a pickup for the NEXT
+// calendar day at that pickup location — batched per (location, date), not
+// per AWB: a single courier visit covers everything manifested and ready at
+// that address regardless of package count, so calling Delhivery's pickup
+// API once per AWB would just spam duplicate requests for the same
+// location/day. The first AWB of the day for a given location actually
+// calls the API; every later AWB that same day just increments the
+// tracked package count locally.
+async function schedulePickupIfNeeded(creds, pickupLocationName) {
+  if (!mdb || !creds?.api_token || !pickupLocationName) return;
+  try {
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const pickupDate = tomorrow.toISOString().slice(0, 10); // YYYY-MM-DD
+    const key = { partner: 'delhivery', pickup_location: pickupLocationName, pickup_date: pickupDate };
+    // findOneAndUpdate upsert with returnDocument:'before' — null means this
+    // call just created the doc (first AWB today for this location), a real
+    // doc means one was already requested; either way the count increments.
+    const before = await mdb.collection('delhivery_pickup_requests').findOneAndUpdate(
+      key,
+      { $inc: { package_count: 1 }, $setOnInsert: { created_at: new Date().toISOString() } },
+      { upsert: true, returnDocument: 'before' }
+    );
+    if (before) return; // already requested for this location+date — nothing more to do
+
+    const body = new URLSearchParams();
+    body.append('format', 'json');
+    body.append('data', JSON.stringify({
+      pickup_time: '18:00:00',
+      pickup_date: pickupDate,
+      pickup_location: pickupLocationName,
+      expected_package_count: 1,
+    }));
+    const res = await fetch('https://track.delhivery.com/fm/request/new/', {
+      method: 'POST',
+      headers: { Authorization: `Token ${creds.api_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    const data = await res.json().catch(() => ({}));
+    await mdb.collection('delhivery_pickup_requests').updateOne(key, { $set: {
+      requested: true, requested_at: new Date().toISOString(),
+      pickup_id: data?.pickup_id || data?.data?.pickup_id || null,
+      response: JSON.stringify(data).slice(0, 500),
+    } });
+    console.log(`📦 Delhivery pickup auto-requested for "${pickupLocationName}" on ${pickupDate}`);
+  } catch (e) { console.error('Delhivery pickup scheduling error:', e.message); }
 }
 
 function shipmentItemDesc(li) {

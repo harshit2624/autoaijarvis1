@@ -1259,6 +1259,22 @@
         .then(r=>r.json()).then(d=>{ setNoteThread(d.notes||[]); setRemarks(d.remarks||[]); }).catch(()=>{});
     };
 
+    const [labelDownloading, setLabelDownloading] = React.useState(false);
+    const downloadLabel = async () => {
+      setLabelDownloading(true);
+      try {
+        const r = await fetch(`${API}/vendor/orders/${order.shopifyId}/shipping-label?awb=${encodeURIComponent(order.awb)}&courier=${encodeURIComponent(order.courier||'')}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.error || 'Label download failed'); }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `label-${order.awb}.pdf`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(url), 5000);
+      } catch (e) { alert(e.message); }
+      setLabelDownloading(false);
+    };
+
     const postNote = async () => {
       if (!newNote.trim()) return;
       setPostingNote(true);
@@ -1467,6 +1483,13 @@
                 <div className="detail-row"><span className="dr-label">Payment</span>     <span className="dr-val" style={{textTransform:'capitalize'}}>{order.financial}</span></div>
                 {order.awb && <div className="detail-row"><span className="dr-label">AWB</span><span className="dr-val" style={{color:'var(--teal)',fontFamily:'monospace'}}>{order.awb}</span></div>}
                 {order.courier && <div className="detail-row"><span className="dr-label">Courier</span><span className="dr-val" style={{textTransform:'capitalize'}}>{order.courier}</span></div>}
+                {order.awb && (order.courier||'').toLowerCase()==='delhivery' && (
+                  <div className="detail-row"><span className="dr-label">Label</span><span className="dr-val">
+                    <button onClick={downloadLabel} disabled={labelDownloading} style={{fontSize:10,fontWeight:700,padding:'4px 10px',borderRadius:5,border:'1px solid var(--border)',background:'var(--bg-hover)',color:'var(--indigo)',cursor:labelDownloading?'default':'pointer'}}>
+                      {labelDownloading ? 'Downloading…' : '⬇ Download Label'}
+                    </button>
+                  </span></div>
+                )}
                 <div className="detail-row">
                   <span className="dr-label">Delivery Status</span>
                   <span style={{display:'flex',alignItems:'center',gap:6}}>
