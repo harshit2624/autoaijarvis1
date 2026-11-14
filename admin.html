@@ -3720,6 +3720,15 @@
     const [revBreakdownOpen, setRevBreakdownOpen] = useState(false);
     const [revBreakdownTab, setRevBreakdownTab] = useState('sales'); // 'sales' | 'commission'
     const [discBreakdownOpen, setDiscBreakdownOpen] = useState(false);
+    const [reclassifying, setReclassifying] = useState(null); // code currently being saved
+    const reclassifyDiscountCode = (code, fundedBy, reload) => {
+      if (code === 'Prepaid') return; // always platform-funded, not a real editable code
+      setReclassifying(code);
+      fetch(`${API}/admin/discount-code-configs/${encodeURIComponent(code)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ funded_by: fundedBy }),
+      }).then(r=>r.json()).then(()=>{ if (reload) reload(); }).finally(()=>setReclassifying(null));
+    };
 
     useEffect(()=>{
       const key = aPeriod?.label || 'all';
@@ -4019,17 +4028,37 @@
                       </div>
                     </div>
                     {discBreakdownOpen && (
-                      <div style={{padding:'8px 0 8px 28px',borderBottom:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:5}}>
+                      <div style={{padding:'8px 0 8px 28px',borderBottom:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:6}}>
                         {(rb.discountBreakdown||[]).length===0 && <span style={{fontSize:11,color:'var(--text-muted)'}}>No discounts used this period.</span>}
                         {(rb.discountBreakdown||[]).map(d=>(
-                          <div key={d.code} style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
-                            <span style={{color:'var(--text-muted)'}}>{d.code==='Prepaid'?'💳 Prepaid incentive':`🏷 ${d.code}`}</span>
-                            <span style={{fontWeight:600,color:'var(--text)'}}>{fmtCur(d.amount)}</span>
+                          <div key={d.code} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:11,gap:8}}>
+                            <span style={{color:'var(--text-muted)',flex:'1 1 auto',minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{d.code==='Prepaid'?'💳 Prepaid incentive':`🏷 ${d.code}`}</span>
+                            {d.code==='Prepaid' ? (
+                              <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:'rgba(96,165,250,.14)',color:'#60a5fa',flexShrink:0}}>CROSCROW</span>
+                            ) : (
+                              <select
+                                value={d.fundedBy}
+                                disabled={reclassifying===d.code}
+                                onChange={e=>reclassifyDiscountCode(d.code, e.target.value, doRefresh)}
+                                style={{fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:99,border:'1px solid var(--border)',background:d.fundedBy==='platform'?'rgba(96,165,250,.14)':'rgba(251,191,36,.14)',color:d.fundedBy==='platform'?'#60a5fa':'#f59e0b',flexShrink:0,cursor:'pointer'}}
+                              >
+                                <option value="vendor">VENDOR</option>
+                                <option value="platform">CROSCROW</option>
+                              </select>
+                            )}
+                            <span style={{fontWeight:600,color:'var(--text)',flexShrink:0,minWidth:70,textAlign:'right'}}>{fmtCur(d.amount)}</span>
                           </div>
                         ))}
+                        {(rb.discountBreakdown||[]).length>0 && (
+                          <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)',marginTop:4,paddingTop:6,borderTop:'1px dashed var(--border)'}}>
+                            <span>Covered by vendors: <b style={{color:'#f59e0b'}}>{fmtCur(rb.discountFundingTotals?.vendor||0)}</b></span>
+                            <span>Covered by CROSCROW: <b style={{color:'#60a5fa'}}>{fmtCur(rb.discountFundingTotals?.platform||0)}</b></span>
+                          </div>
+                        )}
                       </div>
                     )}
                     <Row label="After discount" value={rb.commissionAfterDiscount} bold/>
+                    <Row label="Avg commission / order (after discount)" value={rb.avgCommissionAfterDiscount} indent/>
                     <Row label="Ad spend" value={adSpend} sign="-" indent color="#60a5fa"/>
                     <Row label="Gross profit" value={grossProfit} bold color={grossProfit>=0?'var(--text)':'#ef4444'}/>
                     <Row label="Final realized till now" value={finalRealizedTillNow} bold color={finalRealizedTillNow>=0?'#10b981':'#ef4444'}/>

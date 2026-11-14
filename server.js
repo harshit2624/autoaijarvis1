@@ -7160,6 +7160,33 @@ app.get("/admin/dashboard", adminAuth, async (req, res) => {
 });
 
 // ── GET /admin/analytics ─────────────────────────────────────────────────
+// ── Discount code → who bears the cost (vendor vs CROSCROW) ────────────────
+// Reporting-only classification, not wired into real settlement math — see
+// the fundedByFor comment inside /admin/analytics for why. Defaults to
+// 'vendor' per the standing vendor-agreement clause; admin can override any
+// code here to 'platform' (e.g. the prepaid incentive, which is always
+// CROSCROW's own and not stored here since it isn't a real discount code).
+app.get("/admin/discount-code-configs", adminAuth, async (req, res) => {
+  try {
+    const rows = await mdb.collection('discount_code_configs').find({}).sort({ _id: 1 }).toArray();
+    res.json({ configs: rows.map(r => ({ code: r._id, funded_by: r.funded_by, note: r.note || '', updated_at: r.updated_at })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.put("/admin/discount-code-configs/:code", adminAuth, async (req, res) => {
+  try {
+    const code = String(req.params.code || '').trim().toLowerCase();
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const { funded_by, note } = req.body || {};
+    if (!['vendor', 'platform'].includes(funded_by)) return res.status(400).json({ error: "funded_by must be 'vendor' or 'platform'" });
+    await mdb.collection('discount_code_configs').updateOne(
+      { _id: code },
+      { $set: { funded_by, note: note || '', updated_at: new Date().toISOString(), updated_by: req.staffUsername || 'admin' } },
+      { upsert: true }
+    );
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/admin/analytics", adminAuth, async (req, res) => {
   try {
     const metaDocs = await mdb.collection('order_meta').find({}, { projection: { _id: 0 }, sort: { shopify_created_at: -1 } }).toArray();
@@ -7575,11 +7602,27 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     // separate figure we have to derive. Discount codes containing "prepaid"
     // (case-insensitive) are the automatic prepaid incentive; everything
     // else is a real coupon/referral code.
+    // Who actually bears a discount's cost — vendor or CROSCROW. Nothing
+    // in the real settlement math enforces this today (vendor commission is
+    // computed on undiscounted MRP regardless of any coupon), so this is a
+    // reporting-only classification: per the vendor agreement's default
+    // (discounts borne by vendor unless otherwise agreed; the prepaid
+    // incentive is the one standing exception, always CROSCROW's own).
+    // Unclassified codes default to 'vendor', editable via
+    // /admin/discount-code-configs.
+    const discountCodeConfigRows = await mdb.collection('discount_code_configs').find({}).toArray();
+    const discountCodeConfigMap = {};
+    discountCodeConfigRows.forEach(r => { discountCodeConfigMap[r._id] = r.funded_by; });
+    const fundedByFor = (codeKey) => {
+      if (codeKey === 'Prepaid') return 'platform';
+      return discountCodeConfigMap[codeKey.toLowerCase()] || 'vendor';
+    };
+
     const revBreak = {
       subtotalBeforeDiscount: 0, prepaidDiscount: 0, couponDiscount: 0,
       cancelledRevenue: 0, shippingCollected: 0, prepaidCollectedAmt: 0, codCollectedAmt: 0,
       grossCommission: 0, grossCancelledRtoCommission: 0,
-      commissionAfterAllDiscounts: 0, discountByCoupon: {},
+      commissionAfterAllDiscounts: 0, discountByCoupon: {}, liveOrderCount: 0,
     };
     for (const o of ordersMain) {
       const sid     = String(o.id);
@@ -7652,7 +7695,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         }
       }
       if (isDead) revBreak.cancelledRevenue += orderTotal;
-      else revBreak.commissionAfterAllDiscounts += calcOrderCommAllDiscounts(o);
+      else { revBreak.commissionAfterAllDiscounts += calcOrderCommAllDiscounts(o); revBreak.liveOrderCount++; }
       revBreak.shippingCollected += parseFloat(o.shipping_charge || 0);
       if (o.financial_status === 'paid') revBreak.prepaidCollectedAmt += orderTotal;
       else revBreak.codCollectedAmt += orderTotal;
@@ -7848,12 +7891,19 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         cancelledRtoCommission:      r2c(revBreak.grossCancelledRtoCommission),
         commissionAfterCancellation: r2c(revBreak.grossCommission - revBreak.grossCancelledRtoCommission),
         commissionAfterDiscount:     r2c(revBreak.commissionAfterAllDiscounts),
+        avgCommissionAfterDiscount:  revBreak.liveOrderCount ? r2c(revBreak.commissionAfterAllDiscounts / revBreak.liveOrderCount) : 0,
         realisedCommission:          r2c(allTimeTotals.deliveredCommission),
         // Discount breakdown dropdown — prepaid vs each coupon code used,
         // live orders only (matches the "after discount" step's scope).
+        // Each code is also classified by who bears its cost — see
+        // fundedByFor's comment above for why this is reporting-only.
         discountBreakdown: Object.entries(revBreak.discountByCoupon)
-          .map(([code, amount]) => ({ code, amount: r2c(amount) }))
+          .map(([code, amount]) => ({ code, amount: r2c(amount), fundedBy: fundedByFor(code) }))
           .sort((a, b) => b.amount - a.amount),
+        discountFundingTotals: {
+          vendor:   r2c(Object.entries(revBreak.discountByCoupon).filter(([code]) => fundedByFor(code) === 'vendor').reduce((s, [, amt]) => s + amt, 0)),
+          platform: r2c(Object.entries(revBreak.discountByCoupon).filter(([code]) => fundedByFor(code) === 'platform').reduce((s, [, amt]) => s + amt, 0)),
+        },
       },
       commissionByBracket,
       topVendorsByCommission,
