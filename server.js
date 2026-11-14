@@ -23921,6 +23921,24 @@ app.post("/track/request", async (req, res) => {
 });
 
 // ── Admin: list all return requests ──────────────────────────────────────
+// ── GET /admin/return-requests/counts — lightweight, polled by the sidebar
+// badge (two numbers: new/pending review, and approved-but-overdue pickup).
+// "Overdue" mirrors rrReminderCron's own 48h-since-approval definition
+// (status approved/pickup_scheduled + approved_at older than 48h) so the
+// badge always matches what the WA/email reminder cron would also flag —
+// computed live here, not gated on wa_notif_sent like the cron is, so it
+// stays accurate even after that one-time alert has already fired.
+app.get("/admin/return-requests/counts", adminAuth, async (req, res) => {
+  try {
+    const ago48 = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+    const [pending, overdue] = await Promise.all([
+      mdb.collection('return_requests').countDocuments({ status: 'pending' }),
+      mdb.collection('return_requests').countDocuments({ status: { $in: ['approved', 'pickup_scheduled'] }, approved_at: { $lt: ago48 } }),
+    ]);
+    res.json({ pending, overdue });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/admin/return-requests", adminAuth, async (req, res) => {
   try {
     const { status } = req.query;

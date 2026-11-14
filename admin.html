@@ -18799,6 +18799,21 @@
     const [role,       setRole]       = useState(()=>ls.get('admin_role','admin'));
     const [permissions,setPermissions]= useState(()=>ls.get('admin_permissions',['*']));
     const [staffName,  setStaffName]  = useState(()=>ls.get('admin_staff_name',''));
+    // Sidebar Returns badge — two counts: pending (new, awaiting review) and
+    // overdue (approved 48h+ ago, still no pickup) — same definition the
+    // rrReminderCron WA/email alerts already use. Polled independently of
+    // whichever view is open so it's visible even if admin never clicks in.
+    const [rrCounts, setRrCounts] = useState({ pending: 0, overdue: 0 });
+    useEffect(()=>{
+      if (!token) return;
+      const loadRrCounts = () => {
+        fetch(`${API}/admin/return-requests/counts`,{headers:{Authorization:`Bearer ${token}`}})
+          .then(r=>r.json()).then(d=>{ if (!d.error) setRrCounts(d); }).catch(()=>{});
+      };
+      loadRrCounts();
+      const t = setInterval(loadRrCounts, 60000);
+      return () => clearInterval(t);
+    },[token]);
     // Lazily picks the right starting page from whatever's already in
     // localStorage from a previous login — avoids ever mounting 'dashboard'
     // (which staff can't access) even for a split second on page reload.
@@ -19024,6 +19039,12 @@
                 {visibleNavItems.filter(n=>n.section===sec).map(n=>(
                   <button key={n.id} className={`nav-item ${view===n.id?'active':''}`} onClick={()=>{ if (n.external) { window.open(n.external, '_blank'); closeSidebar(); return; } setView(n.id); closeSidebar(); }}>
                     <span className="nav-icon"><Icon name={n.id} mode={iconStyle} fallback={n.icon}/></span>{n.label}
+                    {n.id==='returns' && (rrCounts.pending>0 || rrCounts.overdue>0) && (
+                      <span style={{marginLeft:'auto',display:'flex',gap:4}}>
+                        {rrCounts.pending>0 && <span title={`${rrCounts.pending} new/pending — awaiting review`} style={{background:'var(--indigo)',color:'#fff',borderRadius:999,minWidth:18,height:18,fontSize:10,fontWeight:700,display:'inline-flex',alignItems:'center',justifyContent:'center',padding:'0 5px'}}>{rrCounts.pending}</span>}
+                        {rrCounts.overdue>0 && <span title={`${rrCounts.overdue} approved 48h+ ago — pickup overdue`} style={{background:'var(--red)',color:'#fff',borderRadius:999,minWidth:18,height:18,fontSize:10,fontWeight:700,display:'inline-flex',alignItems:'center',justifyContent:'center',padding:'0 5px'}}>{rrCounts.overdue}</span>}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
