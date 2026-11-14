@@ -11625,9 +11625,12 @@ app.post("/vendor/orders/:shopifyId/create-shipment", vendorAuth, async (req, re
       await OVS.upsert(sid, req.vendor, { awb: result.awb, courier: realCourier, stage: 'ready', updated_at: new Date().toISOString() });
       if (partner === 'delhivery') {
         schedulePickupIfNeeded(creds, creds.pickup_location || 'Primary').catch(() => {});
-        fetchDelhiveryLabelPdf(creds.api_token, result.awb)
+        fetchDelhiveryLabelPdfWithRetry(creds.api_token, result.awb)
           .then(pdf => sendShipmentLabelToVendorWA(req.vendor, pdf, result.awb, shopifyOrder.name))
-          .catch(e => console.error('Label fetch/send failed:', e.message));
+          .catch(e => {
+            console.error('Label fetch/send failed:', e.message);
+            waAdminAlert(`⚠️ Shipping label send failed\nOrder: ${shopifyOrder.name}\nAWB: ${result.awb}\nVendor: ${req.vendor}\nError: ${e.message}`).catch(() => {});
+          });
       }
 
       // Deduct CC Inventory stock for any shipped items that are physically at CROSCROW
@@ -11862,6 +11865,20 @@ async function fetchDelhiveryLabelPdf(apiToken, awb) {
   const base64Pdf = pkg?.pdf || data.pdf;
   if (base64Pdf) return Buffer.from(base64Pdf, 'base64');
   throw new Error(data.rmk || data.error || `No label data in Delhivery response: ${text.slice(0, 200)}`);
+}
+
+// Delhivery's label PDF isn't always ready in the same instant an AWB is
+// manifested — confirmed live: a fetch immediately after create-shipment
+// can fail, then succeed seconds later with no other change. Retries with
+// a short delay instead of giving up on the first miss, since this call
+// always runs fire-and-forget right after shipment creation.
+async function fetchDelhiveryLabelPdfWithRetry(apiToken, awb, attempts = 4, delayMs = 4000) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try { return await fetchDelhiveryLabelPdf(apiToken, awb); }
+    catch (e) { lastErr = e; if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs)); }
+  }
+  throw lastErr;
 }
 
 // Takes awb/courier directly (query params) rather than re-deriving them
@@ -12175,9 +12192,12 @@ app.post("/admin/orders/:shopifyId/create-shipment", requirePermission('orders')
       schedulePickupIfNeeded(creds, warehouseName).catch(() => {});
       const labelVendor = selected.find(s => s.vendor)?.vendor;
       if (labelVendor) {
-        fetchDelhiveryLabelPdf(creds.api_token, result.awb)
+        fetchDelhiveryLabelPdfWithRetry(creds.api_token, result.awb)
           .then(pdf => sendShipmentLabelToVendorWA(labelVendor, pdf, result.awb, shopifyOrder.name))
-          .catch(e => console.error('Label fetch/send failed:', e.message));
+          .catch(e => {
+            console.error('Label fetch/send failed:', e.message);
+            waAdminAlert(`⚠️ Shipping label send failed\nOrder: ${shopifyOrder.name}\nAWB: ${result.awb}\nVendor: ${labelVendor}\nError: ${e.message}`).catch(() => {});
+          });
       }
     }
 
@@ -29827,10 +29847,17 @@ async function waCloudUploadDocument(buffer, filename, mimetype = 'application/p
 // never something that should block or fail the shipment creation itself.
 async function sendShipmentLabelToVendorWA(vendorName, pdfBuffer, awb, orderName) {
   try {
-    if (!(await waCloudConfigured())) return;
+    if (!(await waCloudConfigured())) {
+      console.error(`Label WA send skipped for ${vendorName} (AWB ${awb}) — Cloud API not configured/enabled`);
+      return;
+    }
     const vp = await mdb.collection('vendor_profiles').findOne({ vendor_name: vendorName }, { projection: { phone: 1 } });
     const phone10 = (vp?.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
-    if (phone10.length !== 10) return;
+    if (phone10.length !== 10) {
+      console.error(`Label WA send skipped for ${vendorName} (AWB ${awb}) — no valid phone on vendor_profiles`);
+      await waAdminAlert(`⚠️ Could not WA shipping label — no valid phone for vendor "${vendorName}"\nOrder: ${orderName || ''}\nAWB: ${awb}`).catch(() => {});
+      return;
+    }
     const mediaId = await waCloudUploadDocument(pdfBuffer, `label-${awb}.pdf`);
     const to = `91${phone10}`;
     const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/messages`, {
@@ -29842,8 +29869,12 @@ async function sendShipmentLabelToVendorWA(vendorName, pdfBuffer, awb, orderName
       }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) console.error('Label WA send failed:', JSON.stringify(data.error || data));
-    else console.log(`📲 Label sent to ${vendorName} (${phone10}) — AWB ${awb}`);
+    if (!res.ok || data.error) {
+      console.error('Label WA send failed:', JSON.stringify(data.error || data));
+      await waAdminAlert(`⚠️ Shipping label WA send failed\nVendor: ${vendorName}\nOrder: ${orderName || ''}\nAWB: ${awb}\nError: ${JSON.stringify(data.error || data).slice(0, 300)}`).catch(() => {});
+    } else {
+      console.log(`📲 Label sent to ${vendorName} (${phone10}) — AWB ${awb}`);
+    }
   } catch (e) { console.error('sendShipmentLabelToVendorWA error:', e.message); }
 }
 
