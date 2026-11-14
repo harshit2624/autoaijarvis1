@@ -30314,7 +30314,7 @@ async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
 
   const sessionResult = await waCloudSendSession(`${phone10}@s.whatsapp.net`, {
     ctaUrl: { displayText: 'Pay ₹99 Now', url: trackUrl },
-    text: `▪ C R O S C R O W ▪\nHIGH RISK ─ ACTION NEEDED\n────────────────\nORDER  ${order.name}\n\nOur shipping partner shows multiple rejected COD orders on this number/address in the past.\n\nTo confirm this order isn't a mistake or fake order, please pay ₹99 now.\n\nTOTAL    ₹${total.toFixed(0)}\nPAY NOW  ₹99\nCOD DUE  ₹${codDue.toFixed(0)}\n\nYou'll receive courier tracking shortly after paying ₹99.`,
+    text: `▪ C R O S C R O W ▪\n*HIGH RISK ─ ACTION NEEDED*\n────────────────\nORDER  *${order.name}*\n\nOur shipping partner shows multiple rejected COD orders on this number/address in the past.\n\nTo confirm this order isn't a mistake or fake order, please *pay ₹99 now*.\n\n*TOTAL     ₹${total.toFixed(0)}*\n*PAY NOW   ₹99*\n*COD DUE   ₹${codDue.toFixed(0)}*\n\nYou'll receive courier tracking shortly after paying ₹99.`,
   }).catch(() => ({ sent: false, reason: 'session_send_error' }));
 
   if (sessionResult.sent) {
@@ -30337,7 +30337,7 @@ async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
 
   // Last resort: Baileys plain text, no button — session + template both failed.
   await waProxySock.sendMessage(`91${phone10}@s.whatsapp.net`, {
-    text: `HIGH RISK — ACTION NEEDED\nOrder ${order.name}\n\nOur shipping partner shows multiple rejected COD orders on this number/address. To confirm this order isn't a mistake, please pay ₹99 now: ${trackUrl}\n\nTOTAL ₹${total.toFixed(0)} · PAY NOW ₹99 · COD DUE ₹${codDue.toFixed(0)}`,
+    text: `*HIGH RISK — ACTION NEEDED*\nOrder *${order.name}*\n\nOur shipping partner shows multiple rejected COD orders on this number/address. To confirm this order isn't a mistake, please *pay ₹99 now*: ${trackUrl}\n\n*TOTAL* ₹${total.toFixed(0)} · *PAY NOW* ₹99 · *COD DUE* ₹${codDue.toFixed(0)}`,
   }).catch(() => {});
 
   auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10, via: 'baileys_fallback', template_fail_reason: templateResult.reason });
