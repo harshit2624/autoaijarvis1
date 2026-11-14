@@ -23326,14 +23326,17 @@ async function schedulePickupIfNeeded(creds, pickupLocationName) {
     // from ever trying again, even after the underlying issue is fixed.
     if (before?.requested) return;
 
-    const body = new URLSearchParams();
-    body.append('format', 'json');
-    body.append('data', JSON.stringify({
+    // Unlike cmu/create.json, this endpoint does NOT use the format=json&
+    // data=<JSON> wrapper — it wants flat form fields directly. Confirmed
+    // live: the wrapped form returns "Insufficient parameters specified"
+    // even with every field present and a healthy wallet balance; flat
+    // fields against the same account succeeded with a real pickup_id.
+    const body = new URLSearchParams({
       pickup_time: '18:00:00',
       pickup_date: pickupDate,
       pickup_location: pickupLocationName,
-      expected_package_count: 1,
-    }));
+      expected_package_count: '1',
+    });
     const res = await fetch('https://track.delhivery.com/fm/request/new/', {
       method: 'POST',
       headers: { Authorization: `Token ${creds.api_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
