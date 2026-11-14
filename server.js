@@ -7507,11 +7507,19 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
     const GST = 0.18;
 
     // Load vendor commission rates
-    const vProfiles = await mdb.collection('vendor_profiles').find({}, { projection: { vendor_name:1, commission_pct:1, _id:0 } }).toArray();
+    const vProfiles = await mdb.collection('vendor_profiles').find({}, { projection: { vendor_name:1, commission_pct:1, prepaid_discount_pct:1, _id:0 } }).toArray();
     const vConfigs  = await mdb.collection('vendor_config').find({}, { projection: { vendor_name:1, commission_pct:1, _id:0 } }).toArray();
     const vProfMap  = Object.fromEntries(vProfiles.map(v=>[v.vendor_name, v]));
     const vCfgMap   = Object.fromEntries(vConfigs.map(v=>[v.vendor_name, v]));
     const getRate   = vendor => (vProfMap[vendor]?.commission_pct ?? vCfgMap[vendor]?.commission_pct ?? 20) / 100;
+    // Vendor's commission base is cut by this % for a prepaid order (default
+    // 10, per vendor_profiles.prepaid_discount_pct) — but the customer only
+    // ever actually sees CUSTOMER_PREPAID_DISCOUNT_PCT off at checkout,
+    // confirmed live against real orders (#4032, #3870: both exactly 5.26%
+    // of subtotal via the PREPAID-DISCOUNT code, not 10%). The spread
+    // between what's deducted from the vendor and what the customer
+    // actually gets is margin CROSCROW keeps — tracked separately below.
+    const getVendorPrepaidPct = vendor => vProfMap[vendor]?.prepaid_discount_pct ?? 10;
 
     // Classify orders by stage
     const TRANSIT_STAGES   = new Set(['ready','pickup','transit','ofd']);
@@ -7623,6 +7631,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       cancelledRevenue: 0, shippingCollected: 0, prepaidCollectedAmt: 0, codCollectedAmt: 0,
       grossCommission: 0, grossCancelledRtoCommission: 0,
       commissionAfterAllDiscounts: 0, discountByCoupon: {}, liveOrderCount: 0,
+      prepaidMarginSaved: 0,
     };
     for (const o of ordersMain) {
       const sid     = String(o.id);
@@ -7642,6 +7651,15 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       if (o.financial_status === 'paid') {
         const gross = (o.line_items||[]).reduce((s,li)=>s+parseFloat(li.price||0)*(li.quantity||1),0);
         commBuckets.prepaid.amt += r2c(gross);
+        // Margin CROSCROW keeps on this order: vendor's commission base was
+        // cut by their full prepaid_discount_pct, but the customer only
+        // actually got CUSTOMER_PREPAID_DISCOUNT_PCT off — the gap, per
+        // vendor's own line revenue, is extra margin.
+        for (const li of (o.line_items || [])) {
+          if (!li.vendor) continue;
+          const spreadPct = Math.max(0, getVendorPrepaidPct(li.vendor) - CUSTOMER_PREPAID_DISCOUNT_PCT);
+          revBreak.prepaidMarginSaved += parseFloat(li.price || 0) * (li.quantity || 1) * (spreadPct / 100);
+        }
       }
 
       const orderTotal = parseFloat(o.total_price || 0);
@@ -7904,6 +7922,9 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
           vendor:   r2c(Object.entries(revBreak.discountByCoupon).filter(([code]) => fundedByFor(code) === 'vendor').reduce((s, [, amt]) => s + amt, 0)),
           platform: r2c(Object.entries(revBreak.discountByCoupon).filter(([code]) => fundedByFor(code) === 'platform').reduce((s, [, amt]) => s + amt, 0)),
         },
+        // Margin kept on the vendor/customer prepaid-discount spread — see
+        // CUSTOMER_PREPAID_DISCOUNT_PCT's comment for why this isn't ₹0.
+        prepaidMarginSaved: r2c(revBreak.prepaidMarginSaved),
       },
       commissionByBracket,
       topVendorsByCommission,
@@ -8244,6 +8265,16 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
       if (r.type) rrTypeMap[key].add(r.type.toLowerCase());
     }
 
+    // Real per-vendor commission rates — same lookup pattern as
+    // /admin/analytics' getRate — so the order detail modal's "Commission
+    // Preview" can show each vendor's actual rate instead of a flat 20%.
+    const vProfilesForComm = await mdb.collection('vendor_profiles').find({}, { projection: { vendor_name: 1, commission_pct: 1, prepaid_discount_pct: 1, _id: 0 } }).toArray();
+    const vConfigsForComm  = await mdb.collection('vendor_config').find({}, { projection: { vendor_name: 1, commission_pct: 1, _id: 0 } }).toArray();
+    const vProfMapForComm = Object.fromEntries(vProfilesForComm.map(v => [v.vendor_name, v]));
+    const vCfgMapForComm  = Object.fromEntries(vConfigsForComm.map(v => [v.vendor_name, v]));
+    const getCommRate = (vendor) => vProfMapForComm[vendor]?.commission_pct ?? vCfgMapForComm[vendor]?.commission_pct ?? 20;
+    const getPrepaidDiscPct = (vendor) => vProfMapForComm[vendor]?.prepaid_discount_pct ?? 10;
+
     const confirmedPenaltyDocs = await mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { shopify_id: 1, vendor_name: 1, penalty_amount: 1, _id: 0 } }).toArray();
     const confirmedPenaltyMap = {}; // { shopify_id: { vendor_name: amount } }
     confirmedPenaltyDocs.forEach(p => {
@@ -8274,6 +8305,24 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
       const shipping = parseFloat(meta.shipping_charge || o.total_shipping_price_set?.shop_money?.amount || 0);
       const sid = String(o.id);
 
+      // Real per-vendor commission breakdown — each vendor's own rate on
+      // their own line items, not one flat % blended across the order.
+      const isPrepaidOrder = o.financial_status === 'paid';
+      const vendorCommissions = vendors.map(v => {
+        const vItems = (o.line_items || []).filter(li => li.vendor === v);
+        const revenue = vItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+        const rate = getCommRate(v);
+        const base = isPrepaidOrder ? revenue * (1 - getPrepaidDiscPct(v) / 100) : revenue;
+        const commission = parseFloat((base * rate / 100).toFixed(2));
+        const gst = parseFloat((commission * 0.18).toFixed(2));
+        // Margin kept on this vendor's line: full prepaid_discount_pct is
+        // deducted from their commission base, but the customer only
+        // actually got CUSTOMER_PREPAID_DISCOUNT_PCT off at checkout — see
+        // that constant's comment for the real numbers confirming this.
+        const prepaidSavings = isPrepaidOrder ? parseFloat((revenue * Math.max(0, getPrepaidDiscPct(v) - CUSTOMER_PREPAID_DISCOUNT_PCT) / 100).toFixed(2)) : 0;
+        return { vendor: v, commission_pct: rate, revenue: parseFloat(revenue.toFixed(2)), commission, gst, prepaidSavings };
+      });
+
       // Populate vtMap from Shopify fulfillments for vendors without an OVS tracking entry
       // Match each fulfillment to vendor(s) via fulfilled line item IDs
       if ((o.fulfillments || []).length > 0) {
@@ -8300,6 +8349,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
         date:           (o.created_at || "").split("T")[0],
         orderValue:     parseFloat((o.total_price || 0)),
         myRevenue:      parseFloat(myRev.toFixed(2)),
+        vendorCommissions,
         shippingCharge: shipping,
         currency:       o.currency || "INR",
         fulfillment:    o.fulfillment_status || "unfulfilled",
@@ -17918,6 +17968,15 @@ app.post('/admin/diwali-tickets/:ticket_id/send-wa', diwaliGateAuth, async (req,
 // ══════════════════════════════════════════════════════════════════════════
 const CONFIRM_FEE = 99; // INR
 const PREPAID_DISCOUNT_PCT = 10; // % off order total for paying in full upfront
+// The % actually taken off at checkout via the PREPAID-DISCOUNT code — NOT
+// the same as PREPAID_DISCOUNT_PCT above or vendor_profiles.prepaid_discount_pct
+// (both default to 10, the amount deducted from the VENDOR's commission
+// base). Confirmed live against real orders (#4032, #3870): both showed
+// exactly 5.26% of subtotal via PREPAID-DISCOUNT, not 10% — so CROSCROW
+// keeps the ~5% spread between what it deducts from the vendor and what it
+// actually passes on to the customer, as extra margin. Used by
+// /admin/analytics and /admin/orders to report that spread separately.
+const CUSTOMER_PREPAID_DISCOUNT_PCT = 5;
 
 // GET /track/confirm-lookup — find order + confirmation status
 app.get("/track/confirm-lookup", async (req, res) => {
