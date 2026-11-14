@@ -4048,33 +4048,70 @@
                       </div>
                     </div>
                     {discBreakdownOpen && (
-                      <div style={{padding:'8px 0 8px 28px',borderBottom:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:6}}>
-                        {(rb.discountBreakdown||[]).length===0 && <span style={{fontSize:11,color:'var(--text-muted)'}}>No discounts used this period.</span>}
-                        {(rb.discountBreakdown||[]).map(d=>(
-                          <div key={d.code} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:11,gap:8}}>
-                            <span style={{color:'var(--text-muted)',flex:'1 1 auto',minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{d.code==='Prepaid'?'💳 Prepaid incentive':`🏷 ${d.code}`}</span>
-                            {d.code==='Prepaid' ? (
-                              <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:'rgba(96,165,250,.14)',color:'#60a5fa',flexShrink:0}}>CROSCROW</span>
-                            ) : (
-                              <select
-                                value={d.fundedBy}
-                                disabled={reclassifying===d.code}
-                                onChange={e=>reclassifyDiscountCode(d.code, e.target.value, doRefresh)}
-                                style={{fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:99,border:'1px solid var(--border)',background:d.fundedBy==='platform'?'rgba(96,165,250,.14)':'rgba(251,191,36,.14)',color:d.fundedBy==='platform'?'#60a5fa':'#f59e0b',flexShrink:0,cursor:'pointer'}}
-                              >
-                                <option value="vendor">VENDOR</option>
-                                <option value="platform">CROSCROW</option>
-                              </select>
-                            )}
-                            <span style={{fontWeight:600,color:'var(--text)',flexShrink:0,minWidth:70,textAlign:'right'}}>{fmtCur(d.amount)}</span>
-                          </div>
-                        ))}
-                        {(rb.discountBreakdown||[]).length>0 && (
-                          <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)',marginTop:4,paddingTop:6,borderTop:'1px dashed var(--border)'}}>
-                            <span>Covered by vendors: <b style={{color:'#f59e0b'}}>{fmtCur(rb.discountFundingTotals?.vendor||0)}</b></span>
-                            <span>Covered by CROSCROW: <b style={{color:'#60a5fa'}}>{fmtCur(rb.discountFundingTotals?.platform||0)}</b></span>
+                      <div style={{padding:'10px 0 14px',borderBottom:'1px solid var(--border)'}}>
+                        {(rb.discountBreakdown||[]).length===0 ? (
+                          <span style={{fontSize:11,color:'var(--text-muted)'}}>No discounts used this period.</span>
+                        ) : (
+                          <div style={{overflowX:'auto'}}>
+                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:11,minWidth:720}}>
+                            <thead>
+                              <tr style={{color:'var(--text-muted)',textAlign:'left',borderBottom:'1px solid var(--border)'}}>
+                                <th style={{padding:'5px 8px',fontWeight:500}}>Code</th>
+                                <th style={{padding:'5px 8px',fontWeight:500}}>Orders</th>
+                                <th style={{padding:'5px 8px',fontWeight:500}}>Discount Given</th>
+                                <th style={{padding:'5px 8px',fontWeight:500}}>Who Bears It</th>
+                                <th style={{padding:'5px 8px',fontWeight:500}}>Covered by Vendor</th>
+                                <th style={{padding:'5px 8px',fontWeight:500}}>Covered by CROSCROW</th>
+                                <th style={{padding:'5px 8px',fontWeight:500}} title="Est. drop in CROSCROW's own commission under the 'after discount' what-if calc — not an actual vendor-settlement deduction; real payouts are computed on undiscounted MRP except for the prepaid incentive.">Commission Impact ⓘ</th>
+                                <th style={{padding:'5px 8px',fontWeight:500}}>% of Gross Commission</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(rb.discountBreakdown||[]).map(d=>(
+                                <tr key={d.code} style={{borderBottom:'1px solid var(--border)'}}>
+                                  <td style={{padding:'7px 8px',color:'var(--text)',fontWeight:600,whiteSpace:'nowrap'}}>{d.code==='Prepaid'?'💳 Prepaid incentive':`🏷 ${d.code}`}</td>
+                                  <td style={{padding:'7px 8px',color:'var(--text-dim)'}}>{d.orders}</td>
+                                  <td style={{padding:'7px 8px',color:'var(--text)',fontWeight:600}}>{fmtCur(d.amount)}</td>
+                                  <td style={{padding:'7px 8px'}}>
+                                    {d.code==='Prepaid' ? (
+                                      <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:'rgba(96,165,250,.14)',color:'#60a5fa'}}>CROSCROW</span>
+                                    ) : (
+                                      <select
+                                        value={d.fundedBy}
+                                        disabled={reclassifying===d.code}
+                                        onChange={e=>reclassifyDiscountCode(d.code, e.target.value, doRefresh)}
+                                        style={{fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:99,border:'1px solid var(--border)',background:d.fundedBy==='platform'?'rgba(96,165,250,.14)':'rgba(251,191,36,.14)',color:d.fundedBy==='platform'?'#60a5fa':'#f59e0b',cursor:'pointer'}}
+                                      >
+                                        <option value="vendor">VENDOR</option>
+                                        <option value="platform">CROSCROW</option>
+                                      </select>
+                                    )}
+                                  </td>
+                                  <td style={{padding:'7px 8px',color:'#f59e0b',fontWeight:600}}>{d.vendorCovered ? fmtCur(d.vendorCovered) : '—'}</td>
+                                  <td style={{padding:'7px 8px',color:'#60a5fa',fontWeight:600}}>{d.platformCovered ? fmtCur(d.platformCovered) : '—'}</td>
+                                  <td style={{padding:'7px 8px',color:'#ef4444',fontWeight:600}}>− {fmtCur(d.commissionImpact)}</td>
+                                  <td style={{padding:'7px 8px',color:'var(--text-dim)'}}>{d.commissionImpactPct}%</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr style={{fontWeight:700}}>
+                                <td style={{padding:'7px 8px',color:'var(--text)'}}>Total</td>
+                                <td style={{padding:'7px 8px'}}></td>
+                                <td style={{padding:'7px 8px',color:'var(--text)'}}>{fmtCur((rb.discountFundingTotals?.vendor||0)+(rb.discountFundingTotals?.platform||0))}</td>
+                                <td style={{padding:'7px 8px'}}></td>
+                                <td style={{padding:'7px 8px',color:'#f59e0b'}}>{fmtCur(rb.discountFundingTotals?.vendor||0)}</td>
+                                <td style={{padding:'7px 8px',color:'#60a5fa'}}>{fmtCur(rb.discountFundingTotals?.platform||0)}</td>
+                                <td style={{padding:'7px 8px',color:'#ef4444'}}>− {fmtCur(discountImpact)}</td>
+                                <td style={{padding:'7px 8px',color:'var(--text)'}}>{rb.totalCommissionImpactPct}%</td>
+                              </tr>
+                            </tfoot>
+                          </table>
                           </div>
                         )}
+                        <div style={{fontSize:9.5,color:'var(--text-muted)',marginTop:8,lineHeight:1.5}}>
+                          "Covered by Vendor/CROSCROW" is the discount ₹ amount itself, split by who's set to bear it (editable above). "Commission Impact" is a separate, what-if number — how much CROSCROW's own commission shrinks under the "after discount" calc — not an actual deduction from any vendor's real settlement (real payouts are computed on undiscounted MRP, unaffected by coupon codes; only the prepaid incentive is a real deduction).
+                        </div>
                       </div>
                     )}
                     <Row label="After discount" value={rb.commissionAfterDiscount} bold/>

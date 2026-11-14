@@ -7631,7 +7631,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       cancelledRevenue: 0, shippingCollected: 0, prepaidCollectedAmt: 0, codCollectedAmt: 0,
       grossCommission: 0, grossCancelledRtoCommission: 0,
       commissionAfterAllDiscounts: 0, discountByCoupon: {}, liveOrderCount: 0,
-      prepaidMarginSaved: 0,
+      prepaidMarginSaved: 0, discountOrderCount: {}, commissionImpactByCoupon: {},
     };
     for (const o of ordersMain) {
       const sid     = String(o.id);
@@ -7705,10 +7705,23 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         // orders). Prepaid-style codes get folded into one "Prepaid" bucket
         // instead of listed individually.
         if (!isDead) {
-          if (prepaidAmt > 0) revBreak.discountByCoupon['Prepaid'] = (revBreak.discountByCoupon['Prepaid'] || 0) + prepaidAmt;
+          // This order's own commission impact — the gap between what
+          // CROSCROW would've earned with no discount at all (grossC) and
+          // what the what-if "after every discount" calc gives (afterDiscC)
+          // — split across prepaid vs coupon in the same $ proportion as
+          // the discount itself, same simplifying assumption used above.
+          const afterDiscC = calcOrderCommAllDiscounts(o);
+          const orderCommImpact = Math.max(0, grossC - afterDiscC);
+          if (prepaidAmt > 0) {
+            revBreak.discountByCoupon['Prepaid'] = (revBreak.discountByCoupon['Prepaid'] || 0) + prepaidAmt;
+            revBreak.discountOrderCount['Prepaid'] = (revBreak.discountOrderCount['Prepaid'] || 0) + 1;
+            if (orderDiscount > 0) revBreak.commissionImpactByCoupon['Prepaid'] = (revBreak.commissionImpactByCoupon['Prepaid'] || 0) + orderCommImpact * (prepaidAmt / orderDiscount);
+          }
           if (couponAmt > 0) {
             const key = otherCodes.length ? otherCodes.join(' + ') : (codes.join(' + ') || 'Other');
             revBreak.discountByCoupon[key] = (revBreak.discountByCoupon[key] || 0) + couponAmt;
+            revBreak.discountOrderCount[key] = (revBreak.discountOrderCount[key] || 0) + 1;
+            if (orderDiscount > 0) revBreak.commissionImpactByCoupon[key] = (revBreak.commissionImpactByCoupon[key] || 0) + orderCommImpact * (couponAmt / orderDiscount);
           }
         }
       }
@@ -7916,12 +7929,32 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         // Each code is also classified by who bears its cost — see
         // fundedByFor's comment above for why this is reporting-only.
         discountBreakdown: Object.entries(revBreak.discountByCoupon)
-          .map(([code, amount]) => ({ code, amount: r2c(amount), fundedBy: fundedByFor(code) }))
+          .map(([code, amount]) => {
+            const fundedBy = fundedByFor(code);
+            const commissionImpact = r2c(revBreak.commissionImpactByCoupon[code] || 0);
+            return {
+              code,
+              amount: r2c(amount),
+              orders: revBreak.discountOrderCount[code] || 0,
+              fundedBy,
+              // Rupee split of the discount AMOUNT itself (who pays the
+              // customer's ₹ off) — separate from commissionImpact below,
+              // which is CROSCROW's own commission shrinking under the
+              // what-if "after every discount" calc regardless of who
+              // funds the discount (real settlements aren't actually
+              // reduced by coupon codes at all — see calcOrderCommAllDiscounts).
+              vendorCovered:   fundedBy === 'vendor'   ? r2c(amount) : 0,
+              platformCovered: fundedBy === 'platform' ? r2c(amount) : 0,
+              commissionImpact,
+              commissionImpactPct: revBreak.grossCommission ? r2c(commissionImpact / revBreak.grossCommission * 100) : 0,
+            };
+          })
           .sort((a, b) => b.amount - a.amount),
         discountFundingTotals: {
           vendor:   r2c(Object.entries(revBreak.discountByCoupon).filter(([code]) => fundedByFor(code) === 'vendor').reduce((s, [, amt]) => s + amt, 0)),
           platform: r2c(Object.entries(revBreak.discountByCoupon).filter(([code]) => fundedByFor(code) === 'platform').reduce((s, [, amt]) => s + amt, 0)),
         },
+        totalCommissionImpactPct: revBreak.grossCommission ? r2c(Object.values(revBreak.commissionImpactByCoupon).reduce((s, v) => s + v, 0) / revBreak.grossCommission * 100) : 0,
         // Margin kept on the vendor/customer prepaid-discount spread — see
         // CUSTOMER_PREPAID_DISCOUNT_PCT's comment for why this isn't ₹0.
         prepaidMarginSaved: r2c(revBreak.prepaidMarginSaved),
