@@ -4059,7 +4059,7 @@
                                 <th style={{padding:'5px 8px',fontWeight:500}}>Code</th>
                                 <th style={{padding:'5px 8px',fontWeight:500}}>Orders</th>
                                 <th style={{padding:'5px 8px',fontWeight:500}}>Discount Given</th>
-                                <th style={{padding:'5px 8px',fontWeight:500}}>Who Bears It</th>
+                                <th style={{padding:'5px 8px',fontWeight:500}} title="Only sets the default for COD orders using this code. Prepaid orders ignore this — vendor's share is always capped at their own prepaid discount % (10% default), CROSCROW absorbs the rest of the total discount no matter how big it gets.">Who Bears It (COD) ⓘ</th>
                                 <th style={{padding:'5px 8px',fontWeight:500}}>Covered by Vendor</th>
                                 <th style={{padding:'5px 8px',fontWeight:500}}>Covered by CROSCROW</th>
                                 <th style={{padding:'5px 8px',fontWeight:500}} title="Est. drop in CROSCROW's own commission under the 'after discount' what-if calc — not an actual vendor-settlement deduction; real payouts are computed on undiscounted MRP except for the prepaid incentive.">Commission Impact ⓘ</th>
@@ -4110,7 +4110,7 @@
                           </div>
                         )}
                         <div style={{fontSize:9.5,color:'var(--text-muted)',marginTop:8,lineHeight:1.5}}>
-                          "Covered by Vendor/CROSCROW" is the discount ₹ amount itself, split by who's set to bear it (editable above). "Commission Impact" is a separate, what-if number — how much CROSCROW's own commission shrinks under the "after discount" calc — not an actual deduction from any vendor's real settlement (real payouts are computed on undiscounted MRP, unaffected by coupon codes; only the prepaid incentive is a real deduction).
+                          "Covered by Vendor/CROSCROW" is the discount ₹ amount itself. On a <b>prepaid order</b>, the vendor's share is always capped at their own prepaid discount % (10% default) of revenue, no matter how big the total discount gets from stacked codes — CROSCROW absorbs everything past that cap. On a <b>COD order</b>, it follows the per-code default set above instead. Because of this, the same code can show up split across both columns depending on which orders it was used on. "Commission Impact" is a separate, what-if number — how much CROSCROW's own commission shrinks under the "after discount" calc — not an actual deduction from any vendor's real settlement (real payouts are computed on undiscounted MRP, unaffected by coupon codes; only the prepaid incentive is a real deduction).
                         </div>
                       </div>
                     )}

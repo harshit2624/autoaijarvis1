@@ -7632,6 +7632,7 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
       grossCommission: 0, grossCancelledRtoCommission: 0,
       commissionAfterAllDiscounts: 0, discountByCoupon: {}, liveOrderCount: 0,
       prepaidMarginSaved: 0, discountOrderCount: {}, commissionImpactByCoupon: {},
+      vendorCoveredByCoupon: {}, platformCoveredByCoupon: {},
     };
     for (const o of ordersMain) {
       const sid     = String(o.id);
@@ -7712,16 +7713,50 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
           // the discount itself, same simplifying assumption used above.
           const afterDiscC = calcOrderCommAllDiscounts(o);
           const orderCommImpact = Math.max(0, grossC - afterDiscC);
+
+          // Who actually bears THIS order's total discount. Two different
+          // rules depending on payment type, confirmed live:
+          // - Prepaid order: vendor's exposure is capped at their own
+          //   prepaid_discount_pct (default 10%) of line revenue, no matter
+          //   how big the total discount gets from stacked codes (seen up
+          //   to 15-25% on real orders) — CROSCROW absorbs everything past
+          //   that cap, regardless of which code caused it.
+          // - COD order: falls back to the per-code classification
+          //   (fundedByFor/discount_code_configs), since there's no prepaid
+          //   cap mechanism to apply.
+          let vendorCoveredThisOrder, platformCoveredThisOrder;
+          if (o.financial_status === 'paid') {
+            const lineItems = (o.line_items || []).filter(li => li.vendor);
+            const lineTotal = lineItems.reduce((s, li) => s + parseFloat(li.price || 0) * (li.quantity || 1), 0);
+            let weightedCapPct = 10;
+            if (lineTotal > 0) {
+              weightedCapPct = lineItems.reduce((s, li) => s + (parseFloat(li.price || 0) * (li.quantity || 1) / lineTotal) * getVendorPrepaidPct(li.vendor), 0);
+            }
+            const vendorCapAmt = lineTotal * weightedCapPct / 100;
+            vendorCoveredThisOrder = Math.min(orderDiscount, vendorCapAmt);
+            platformCoveredThisOrder = orderDiscount - vendorCoveredThisOrder;
+          } else {
+            vendorCoveredThisOrder = 0; platformCoveredThisOrder = 0;
+            if (prepaidAmt > 0) { if (fundedByFor('Prepaid') === 'vendor') vendorCoveredThisOrder += prepaidAmt; else platformCoveredThisOrder += prepaidAmt; }
+            if (couponAmt > 0) { const k = otherCodes.length ? otherCodes.join(' + ') : (codes.join(' + ') || 'Other'); if (fundedByFor(k) === 'vendor') vendorCoveredThisOrder += couponAmt; else platformCoveredThisOrder += couponAmt; }
+          }
+
           if (prepaidAmt > 0) {
+            const share = orderDiscount > 0 ? prepaidAmt / orderDiscount : 0;
             revBreak.discountByCoupon['Prepaid'] = (revBreak.discountByCoupon['Prepaid'] || 0) + prepaidAmt;
             revBreak.discountOrderCount['Prepaid'] = (revBreak.discountOrderCount['Prepaid'] || 0) + 1;
-            if (orderDiscount > 0) revBreak.commissionImpactByCoupon['Prepaid'] = (revBreak.commissionImpactByCoupon['Prepaid'] || 0) + orderCommImpact * (prepaidAmt / orderDiscount);
+            revBreak.vendorCoveredByCoupon['Prepaid'] = (revBreak.vendorCoveredByCoupon['Prepaid'] || 0) + vendorCoveredThisOrder * share;
+            revBreak.platformCoveredByCoupon['Prepaid'] = (revBreak.platformCoveredByCoupon['Prepaid'] || 0) + platformCoveredThisOrder * share;
+            if (orderDiscount > 0) revBreak.commissionImpactByCoupon['Prepaid'] = (revBreak.commissionImpactByCoupon['Prepaid'] || 0) + orderCommImpact * share;
           }
           if (couponAmt > 0) {
             const key = otherCodes.length ? otherCodes.join(' + ') : (codes.join(' + ') || 'Other');
+            const share = orderDiscount > 0 ? couponAmt / orderDiscount : 0;
             revBreak.discountByCoupon[key] = (revBreak.discountByCoupon[key] || 0) + couponAmt;
             revBreak.discountOrderCount[key] = (revBreak.discountOrderCount[key] || 0) + 1;
-            if (orderDiscount > 0) revBreak.commissionImpactByCoupon[key] = (revBreak.commissionImpactByCoupon[key] || 0) + orderCommImpact * (couponAmt / orderDiscount);
+            revBreak.vendorCoveredByCoupon[key] = (revBreak.vendorCoveredByCoupon[key] || 0) + vendorCoveredThisOrder * share;
+            revBreak.platformCoveredByCoupon[key] = (revBreak.platformCoveredByCoupon[key] || 0) + platformCoveredThisOrder * share;
+            if (orderDiscount > 0) revBreak.commissionImpactByCoupon[key] = (revBreak.commissionImpactByCoupon[key] || 0) + orderCommImpact * share;
           }
         }
       }
@@ -7926,33 +7961,34 @@ app.get("/admin/analytics", adminAuth, async (req, res) => {
         realisedCommission:          r2c(allTimeTotals.deliveredCommission),
         // Discount breakdown dropdown — prepaid vs each coupon code used,
         // live orders only (matches the "after discount" step's scope).
-        // Each code is also classified by who bears its cost — see
-        // fundedByFor's comment above for why this is reporting-only.
+        // vendorCovered/platformCovered are real computed ₹, not a simple
+        // per-code binary classification: a prepaid order caps the
+        // vendor's exposure at their own prepaid_discount_pct (default
+        // 10%) of line revenue no matter how big the total discount gets
+        // from stacked codes, CROSCROW absorbs the rest — a COD order
+        // falls back to the per-code default (fundedByFor/
+        // discount_code_configs). So the SAME code can show up split
+        // between both columns if it's used across both payment types.
+        // fundedBy below reflects only the COD-order default and is what
+        // the dropdown edits — it has no effect on prepaid orders.
         discountBreakdown: Object.entries(revBreak.discountByCoupon)
           .map(([code, amount]) => {
-            const fundedBy = fundedByFor(code);
             const commissionImpact = r2c(revBreak.commissionImpactByCoupon[code] || 0);
             return {
               code,
               amount: r2c(amount),
               orders: revBreak.discountOrderCount[code] || 0,
-              fundedBy,
-              // Rupee split of the discount AMOUNT itself (who pays the
-              // customer's ₹ off) — separate from commissionImpact below,
-              // which is CROSCROW's own commission shrinking under the
-              // what-if "after every discount" calc regardless of who
-              // funds the discount (real settlements aren't actually
-              // reduced by coupon codes at all — see calcOrderCommAllDiscounts).
-              vendorCovered:   fundedBy === 'vendor'   ? r2c(amount) : 0,
-              platformCovered: fundedBy === 'platform' ? r2c(amount) : 0,
+              fundedBy: fundedByFor(code),
+              vendorCovered:   r2c(revBreak.vendorCoveredByCoupon[code] || 0),
+              platformCovered: r2c(revBreak.platformCoveredByCoupon[code] || 0),
               commissionImpact,
               commissionImpactPct: revBreak.grossCommission ? r2c(commissionImpact / revBreak.grossCommission * 100) : 0,
             };
           })
           .sort((a, b) => b.amount - a.amount),
         discountFundingTotals: {
-          vendor:   r2c(Object.entries(revBreak.discountByCoupon).filter(([code]) => fundedByFor(code) === 'vendor').reduce((s, [, amt]) => s + amt, 0)),
-          platform: r2c(Object.entries(revBreak.discountByCoupon).filter(([code]) => fundedByFor(code) === 'platform').reduce((s, [, amt]) => s + amt, 0)),
+          vendor:   r2c(Object.values(revBreak.vendorCoveredByCoupon).reduce((s, v) => s + v, 0)),
+          platform: r2c(Object.values(revBreak.platformCoveredByCoupon).reduce((s, v) => s + v, 0)),
         },
         totalCommissionImpactPct: revBreak.grossCommission ? r2c(Object.values(revBreak.commissionImpactByCoupon).reduce((s, v) => s + v, 0) / revBreak.grossCommission * 100) : 0,
         // Margin kept on the vendor/customer prepaid-discount spread — see
