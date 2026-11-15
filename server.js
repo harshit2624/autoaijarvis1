@@ -31604,6 +31604,28 @@ app.post('/webhooks/abandoned-cart', express.text({ type: '*/*', limit: '2mb' })
     // ── WhatsApp recovery message ─────────────────────────────────────────
     if (!phone || phone.length !== 10) return;
 
+    // Touch 2/3 already guard against this (abandonedCartHasRecentOrder) but
+    // Touch 1 — this immediate webhook send — never did. GoKwik can fire the
+    // "abandoned checkout" webhook even after the same customer already
+    // completed the order (webhook ordering/race, a late-arriving retry,
+    // etc.), so without this check a customer who already paid full price
+    // gets offered a ₹150-off code — the exact setup for them to cancel and
+    // re-order using the discount. Checked against the real Shopify order
+    // record (not a stale local flag), same as Touch 2/3.
+    // Window starts a few hours BEFORE this webhook fired, not from "now"
+    // onward — the real race is an order placed shortly before a late/
+    // re-fired abandoned-checkout webhook arrives, which "after now" would
+    // never catch.
+    const recentOrderCheckSince = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    if (await abandonedCartHasRecentOrder(phone, recentOrderCheckSince)) {
+      await mdb.collection('abandoned_carts').updateOne(
+        cartId ? { cart_id: cartId } : { _id: inserted.insertedId },
+        { $set: { wa_sent: true, wa_sent_at: null, wa_skipped: 'already_ordered' } }
+      );
+      console.log(`⏭  Abandoned cart WA skipped — ${phone} already has a real order since this cart was captured`);
+      return;
+    }
+
     const discountCode = 'COMEBACK';
     const discountAmt  = 150;
 
