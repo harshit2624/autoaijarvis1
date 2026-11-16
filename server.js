@@ -1320,7 +1320,24 @@ async function applyTagMappings(orderId, tags, financialStatus) {
               logStageEvent({ shopifyId: sid, orderName, vendor, fromStage: existing?.stage || null, toStage: newStage, actor: 'webhook', actorId: 'orders/updated', source: 'tag_mapping_sync', reason: `tag matched: ${winner.shopify_tag}`, skipped: true, skipReason: 'vendor already past this stage, non-force stage' });
               continue;
             }
-            const newStartedAt = ORDER_WIDE_STAGES.includes(newStage) ? (existing?.stage_started_at || nowMs) : (existing?.stage_started_at || 0);
+            // Refresh stage_started_at to now whenever this is a GENUINE
+            // re-entry into confirmed/partial from some other stage (hold,
+            // misc, rto, ready, etc.) — not just a redundant re-sync of the
+            // same winning tag while already sitting in confirmed/partial.
+            // Without this distinction, re-entering confirmed paired the
+            // freshly-reset penalty_triggered:0 below with a stage_started_at
+            // left over from months earlier, so the very next cron tick saw
+            // "elapsed >= 48h" instantly and fired a brand new penalty for
+            // an order that never actually left its stuck state — confirmed
+            // live as the dominant cause of duplicate 48hr_breach penalties
+            // (79 of 98 real shopify_id+vendor pairs with >1 penalty doc),
+            // via exactly this confirmed→misc→confirmed→hold→confirmed
+            // cycle (order #6900348158083/PVTLTD: 3 separate ₹100 charges
+            // for one continuous delay).
+            const reenteringConfirmedFromElsewhere = ORDER_WIDE_STAGES.includes(newStage) && !ORDER_WIDE_STAGES.includes(existing?.stage || '');
+            const newStartedAt = ORDER_WIDE_STAGES.includes(newStage)
+              ? (reenteringConfirmedFromElsewhere ? nowMs : (existing?.stage_started_at || nowMs))
+              : (existing?.stage_started_at || 0);
             await OVS.upsert(sid, vendor, { stage: newStage, updated_at: now, stage_started_at: newStartedAt, warning_sent: 0, penalty_triggered: 0 });
             logStageEvent({ shopifyId: sid, orderName, vendor, fromStage: existing?.stage || null, toStage: newStage, awb: existing?.awb || '', actor: 'webhook', actorId: 'orders/updated', source: 'tag_mapping_sync', reason: `tag matched: ${winner.shopify_tag}` });
           }
@@ -9270,11 +9287,24 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       await mdb.collection('settlement_orders').insertMany(settlOrderDocs);
     }
 
-    // Include confirmed penalties for this vendor in the settlement period
-    const confirmedPenalties = await mdb.collection('order_penalties').find(
+    // Include confirmed penalties for this vendor in the settlement period —
+    // excluding any penalty already billed on a DIFFERENT settlement. The
+    // query below only filters by triggered_at falling in this period, with
+    // no check against settlement_penalties, so two settlements with
+    // overlapping periods (e.g. a broad Sep1-Oct20 settlement generated
+    // after an earlier Sep1-Sep30 one) would both independently bill the
+    // SAME penalty — confirmed live: 93 penalty_ids double-billed this way
+    // across real settlements (SICOS alone lost ₹6,300 to this exact
+    // overlap). /admin/settlements/:id/outstanding-penalties and the edit
+    // route already guard against this correctly (alreadyInvoicedPenIds);
+    // this was the one remaining gap.
+    const allSettlPenDocsForDedup = await mdb.collection('settlement_penalties').find({}, { projection: { penalty_id: 1, _id: 0 } }).toArray();
+    const alreadyInvoicedPenIdsForGenerate = new Set(allSettlPenDocsForDedup.map(p => p.penalty_id));
+    const confirmedPenaltiesRaw = await mdb.collection('order_penalties').find(
       { vendor_name, status: 'confirmed', triggered_at: { $gte: periodStartTs, $lte: periodEndTs } },
       { projection: { _id: 0 } }
     ).toArray();
+    const confirmedPenalties = confirmedPenaltiesRaw.filter(p => !alreadyInvoicedPenIdsForGenerate.has(p.id));
     const penaltyTotal = confirmedPenalties.reduce((s, p) => s + (p.penalty_amount || 0), 0);
     if (penaltyTotal > 0) {
       const penDocs = await Promise.all(confirmedPenalties.map(async p => ({ id: await nextId('settlement_penalties'), settlement_id: settlId, penalty_id: p.id, amount: p.penalty_amount })));
@@ -18907,9 +18937,23 @@ async function penaltyCronJob() {
     const today = new Date().toISOString().split('T')[0];
     const etaPast = await DR.expiredEta(today);
     for (const dr of etaPast) {
-      const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: dr.shopify_id, vendor_name: dr.vendor_name }, { projection: { stage: 1, _id: 0 } });
+      const ovs = await mdb.collection('order_vendor_stage').findOne({ shopify_id: dr.shopify_id, vendor_name: dr.vendor_name }, { projection: { stage: 1, penalty_triggered: 1, _id: 0 } });
       const fulfilledStages = ['ready','pickup','transit','ofd','delivered','rto','cancelled'];
-      if (!ovs || !fulfilledStages.includes(ovs.stage)) {
+      // eta_penalty_triggered (on the delay_remarks doc itself) only stops
+      // THIS one remark from re-firing — it does nothing to stop a vendor
+      // (or admin) from submitting ANOTHER fresh delay remark with a new
+      // committed date for the same still-undispatched order, whose expiry
+      // then fires a brand new, fully independent penalty. Unlike the
+      // 48hr_breach and fake_dispatch checks above (both guard on
+      // `!row.penalty_triggered`), this path had no such guard at all.
+      // Confirmed live: order #1774/Odd Affair alone racked up 39 separate
+      // ₹100 penalties this way over several months, every ~3-6 days, as
+      // each new ETA promise expired in turn. Same order_vendor_stage.
+      // penalty_triggered flag the other two paths already rely on — it
+      // only resets when the order genuinely re-enters 'confirmed' fresh
+      // (see the three penalty_triggered:0 reset sites), so this can't
+      // block a real NEW violation on a later order cycle.
+      if (!ovs?.penalty_triggered && (!ovs || !fulfilledStages.includes(ovs.stage))) {
         let orderName = '';
         try { const od = await shopifyREST(`/orders/${dr.shopify_id}.json?fields=name`); orderName = od?.order?.name || ''; } catch {}
         triggerPenalty(dr.shopify_id, dr.vendor_name, orderName, 'eta_breach');
