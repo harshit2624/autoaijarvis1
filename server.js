@@ -2280,6 +2280,7 @@ app.post("/webhooks/orders", (req, res) => {
               const _cloudTplAdv = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: await confirmationHeaderImage(_enrichedAdv, WA_CLOUD_FALLBACK_IMAGE), bodyParams: [payload.name, _itemsListAdv, _addressLineAdv, _advAmtAdv.toFixed(0), Math.max(0, _totalAdv - _advAmtAdv).toFixed(0)], urlButtonParam: `${_orderSlugAdv}&contact=na` };
               await waSendToCustomer(_advPhone, _msgAdv, _cloudTplAdv).catch(e => console.error('WA advance-confirmed (create) error:', e.message));
               await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { 'wa_notif_sent.confirmed_tag': new Date().toISOString() } });
+              waAdminAlert(`Advance received — ${payload.name} (₹${_advAmtAdv.toFixed(0)})`, 'order_ticket').catch(() => {});
               console.log(`📲 Advance confirmed card sent immediately for ${payload.name}`);
             } catch (e) { console.error('Advance confirmed-card send error:', e.message); }
           })();
@@ -2520,7 +2521,7 @@ app.post("/webhooks/orders", (req, res) => {
               const _addressLine2 = [_addr2.address1, _addr2.city, _addr2.zip].filter(Boolean).join(', ') || 'address on file';
               const _enrichedForConf = await enrichOrderImages({ line_items: payload.line_items }).catch(() => null);
               const _confImage = await confirmationHeaderImage(_enrichedForConf, WA_CLOUD_FALLBACK_IMAGE);
-              let _cloudTpl, _waConfirm, _dedupKey;
+              let _cloudTpl, _waConfirm, _dedupKey, _advAmtForAlert;
               if (_isPrepaid) {
                 _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ PREPAID\n────────────────\nORDER  ${payload.name}\n\nPAID   ₹${_total.toFixed(0)}\n\nSTATE  Order confirmed. No payment at delivery.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
                 _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_PREPAID, headerImageUrl: _confImage, bodyParams: [payload.name, _itemsList2, _addressLine2, _total.toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
@@ -2536,6 +2537,7 @@ app.post("/webhooks/orders", (req, res) => {
                 _waConfirm = `${_F}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${payload.name}\n\nADV    ₹${_advAmt2.toFixed(0)} received\nCOD    ₹${Math.max(0, _total - _advAmt2).toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrl}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_F}`;
                 _cloudTpl = { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: _confImage, bodyParams: [payload.name, _itemsList2, _addressLine2, _advAmt2.toFixed(0), Math.max(0, _total - _advAmt2).toFixed(0)], urlButtonParam: `${_orderSlug}&contact=na` };
                 _dedupKey = 'confirmed_tag';
+                _advAmtForAlert = _advAmt2;
               } else if (WA_PARTIAL_AWAITING_ENABLED) {
                 // Tag present but no ₹99 yet, and our own WA Confirm handler
                 // hasn't already sent the ask (fallback path: tag added via
@@ -2553,6 +2555,7 @@ app.post("/webhooks/orders", (req, res) => {
               if (_waConfirm) {
                 await waSendToCustomer(_confPhone, _waConfirm, _cloudTpl).catch(e => console.error('WA confirmed_tag error:', e.message));
                 await mdb.collection('order_meta').updateOne({ shopify_id: sid }, { $set: { [`wa_notif_sent.${_dedupKey}`]: new Date().toISOString() } });
+                if (_advAmtForAlert != null) waAdminAlert(`Advance received — ${payload.name} (₹${_advAmtForAlert.toFixed(0)})`, 'order_ticket').catch(() => {});
                 console.log(`✅ WA confirmed_tag sent for ${payload.name} (${_dedupKey})`);
               }
               waLogNotifTrigger({
@@ -18337,6 +18340,7 @@ async function recordOrderConfirmationPayment({ shopify_order_id, razorpay_payme
             const _trackUrl14 = `${SERVER_URL}/o/${orderSlug14}`;
             const waMsg = `${_Fp}\n▪ C R O S C R O W ▪\n█████░░░░░░░░░ 35%\nCONFIRMED ─ ADVANCE RECEIVED\n────────────────\nORDER  ${orderName}\n\nADV    ₹${CONFIRM_FEE} received\nCOD    ₹${remaining.toFixed(0)} at delivery\n\nSTATE  Confirmed and moving. Packing starts now.\n\nTRACK  ${_trackUrl14}\n────────────────\nDISPATCH UPDATE COMING SOON\n${_Fp}`;
             await waSendToCustomer(customerPhone, waMsg, { templateName: WA_TPL.ORDER_CONFIRMED_COD_ADVANCE, headerImageUrl: confImage14, bodyParams: [orderName, itemsList14, addressLine14, String(CONFIRM_FEE), remaining.toFixed(0)], urlButtonParam: `${orderSlug14}&contact=na` });
+            waAdminAlert(`Advance received — ${orderName} (₹${CONFIRM_FEE})`, 'order_ticket').catch(() => {});
           }
         }
       }
