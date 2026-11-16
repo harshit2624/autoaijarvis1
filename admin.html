@@ -5627,6 +5627,7 @@
     const [filterVendor,  setFilterVendor]  = useState('all');
     const [filterPayment, setFilterPayment] = useState('all'); // all | prepaid | cod | advance
     const [filterCampaign, setFilterCampaign] = useState('all'); // all | '__none__' (direct/no campaign) | a real campaign name
+    const [summaryMoreOpen, setSummaryMoreOpen] = useState(false);
     const [filterTags,    setFilterTags]    = useState(new Set());
     const [showTagDrop,   setShowTagDrop]   = useState(false);
     const [tagSearch,     setTagSearch]     = useState('');
@@ -5795,9 +5796,13 @@
         const b = buckets[key] || {count:0,amount:0};
         return { count:b.count, amount:b.amount, pctAll: pct(b.count,totalCount), pctDispatched: pct(b.count,dispatchedCount) };
       };
+      const cancelledCount = (buckets['cancelled']||{count:0}).count;
+      const pendingCount = totalCount - dispatchedCount - cancelledCount;
+      const pendingAmount = totalAmount - dispatchedAmount - (buckets['cancelled']||{amount:0}).amount;
       return {
         totalCount, totalAmount,
         dispatched: { count:dispatchedCount, amount:dispatchedAmount, pctAll: pct(dispatchedCount,totalCount) },
+        pending: { count:pendingCount, amount:pendingAmount, pctAll: pct(pendingCount,totalCount) },
         cancelled: get('cancelled'), transit: get('transit'), delivered: get('delivered'), rto: get('rto'), stuck: get('stuck'),
         newStage: get('new'), confirmed: get('confirmed'), partial: get('partial'),
         ready: get('ready'), pickup: get('pickup'), ofd: get('ofd'),
@@ -5921,11 +5926,11 @@
             period/vendor/payment/campaign/tags filters are active, stays
             stable regardless of which stage pill is highlighted below. ── */}
         {!isMobile && (
-          <div style={{background:'rgba(99,102,241,.06)',border:'1px solid rgba(99,102,241,.2)',borderRadius:10,padding:'14px 16px',marginBottom:14}}>
+          <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:14}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:10,flexWrap:'wrap',gap:8}}>
               <div style={{display:'flex',alignItems:'baseline',gap:10}}>
                 <span style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5}}>📋 Order Summary</span>
-                <span style={{fontSize:20,fontWeight:900,color:'var(--indigo)'}}>{stageSummary.totalCount}</span>
+                <span style={{fontSize:20,fontWeight:900,color:'var(--text)'}}>{stageSummary.totalCount}</span>
                 <span style={{fontSize:11,color:'var(--text-muted)'}}>orders · <b style={{color:'var(--text)'}}>₹{Math.round(stageSummary.totalAmount).toLocaleString('en-IN')}</b> total value</span>
               </div>
               {(period || filterVendor!=='all' || filterPayment!=='all' || filterCampaign!=='all') && (
@@ -5934,23 +5939,30 @@
             </div>
             <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:10}}>
               <SummaryCard label="Cancelled" icon="✕" color="var(--red)" stat={stageSummary.cancelled}/>
+              <SummaryCard label="Pending" icon="⏳" color="#f59e0b" stat={stageSummary.pending}/>
               <SummaryCard label="Dispatched" icon="📦" color="var(--teal)" stat={stageSummary.dispatched}/>
               <SummaryCard label="In Transit" icon="🚚" color="var(--orange)" stat={stageSummary.transit} showDispatchedPct/>
               <SummaryCard label="Delivered" icon="✅" color="var(--green)" stat={stageSummary.delivered} showDispatchedPct/>
               <SummaryCard label="RTO" icon="↩" color="var(--red)" stat={stageSummary.rto} showDispatchedPct/>
             </div>
-            <div style={{display:'flex',gap:14,flexWrap:'wrap',paddingTop:10,borderTop:'1px dashed var(--border)'}}>
-              <MiniStat label="New" stat={stageSummary.newStage}/>
-              <MiniStat label="Confirmed" stat={stageSummary.confirmed}/>
-              <MiniStat label="Partial" stat={stageSummary.partial}/>
-              <MiniStat label="Ready" stat={stageSummary.ready}/>
-              <MiniStat label="Pickup Pending" stat={stageSummary.pickup}/>
-              <MiniStat label="Out for Delivery" stat={stageSummary.ofd}/>
-              <MiniStat label="Stuck" stat={stageSummary.stuck}/>
-              <MiniStat label="Hold" stat={stageSummary.hold}/>
-              <MiniStat label="Misc" stat={stageSummary.misc}/>
-              <MiniStat label="Returned" stat={stageSummary.returned}/>
-            </div>
+            <button onClick={()=>setSummaryMoreOpen(v=>!v)} style={{display:'flex',alignItems:'center',gap:5,fontSize:10,fontWeight:600,color:'var(--text-muted)',background:'transparent',border:'none',cursor:'pointer',padding:'4px 0'}}>
+              <span style={{display:'inline-block',transition:'transform .15s',transform:summaryMoreOpen?'rotate(90deg)':'rotate(0deg)'}}>▸</span>
+              {summaryMoreOpen?'Hide':'Show'} breakdown by stage
+            </button>
+            {summaryMoreOpen && (
+              <div style={{display:'flex',gap:14,flexWrap:'wrap',paddingTop:10,marginTop:4,borderTop:'1px dashed var(--border)'}}>
+                <MiniStat label="New" stat={stageSummary.newStage}/>
+                <MiniStat label="Confirmed" stat={stageSummary.confirmed}/>
+                <MiniStat label="Partial" stat={stageSummary.partial}/>
+                <MiniStat label="Ready" stat={stageSummary.ready}/>
+                <MiniStat label="Pickup Pending" stat={stageSummary.pickup}/>
+                <MiniStat label="Out for Delivery" stat={stageSummary.ofd}/>
+                <MiniStat label="Stuck" stat={stageSummary.stuck}/>
+                <MiniStat label="Hold" stat={stageSummary.hold}/>
+                <MiniStat label="Misc" stat={stageSummary.misc}/>
+                <MiniStat label="Returned" stat={stageSummary.returned}/>
+              </div>
+            )}
           </div>
         )}
 
