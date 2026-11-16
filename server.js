@@ -19988,7 +19988,20 @@ async function syncShipSagarStage(shopifyId, vendorName, awb) {
     // ofd ANYWHERE in this vendor's own stage history (the package truly
     // never left their hands, regardless of what ShipSagar's text says).
     if (newStage === 'rto') {
-      const everMoved = (existingRow?.stage_history || []).some(h => ['pickup', 'transit', 'ofd'].includes(h.stage));
+      // "Ever moved" must also check the REAL courier scan history, not
+      // just our own stage_history — ours can lag or skip an intermediate
+      // stage (confirmed live: order 18971717566595/THEFITCHECK had 13+
+      // real "In Transit" scans from ShipSagar, but our own stage_history
+      // jumped straight from 'ready' to 'stuck' and never recorded
+      // 'transit' at all). Trusting only our own record wrongly downgraded
+      // a genuine in-motion "Out for Return" to 'stuck' (implying it was
+      // never picked up), when the real scan history clearly shows
+      // otherwise. Checking ss.history directly is the authoritative
+      // signal; our own stage_history is just a fallback for when the
+      // courier's own history is thin/missing.
+      const everMovedOurs = (existingRow?.stage_history || []).some(h => ['pickup', 'transit', 'ofd'].includes(h.stage));
+      const everMovedReal = (ss.history || []).some(h => ['pickup', 'transit', 'ofd'].includes(shipsagarStatusToStage(h.ActionDescription || h.Status || h.EventDescription || h.Description || '')));
+      const everMoved = everMovedOurs || everMovedReal;
       if (shipsagarIsPickupFailure(desc) || !everMoved) effectiveNewStage = 'stuck';
     }
     const result = await OVS.upsert(sid, vendorName, { stage: effectiveNewStage, updated_at: now }, { respectManualOverride: true, respectStageOrder: true });
