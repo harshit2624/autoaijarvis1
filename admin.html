@@ -5628,6 +5628,9 @@
     const [filterPayment, setFilterPayment] = useState('all'); // all | prepaid | cod | advance
     const [filterCampaign, setFilterCampaign] = useState('all'); // all | '__none__' (direct/no campaign) | a real campaign name
     const [summaryMoreOpen, setSummaryMoreOpen] = useState(false);
+    const [trendMetric, setTrendMetric] = useState('revenue'); // revenue | orders
+    const [trendVisible, setTrendVisible] = useState(()=>new Set(['cancelled','dispatched','delivered','rto']));
+    const [trendHoverIdx, setTrendHoverIdx] = useState(null);
     const [filterTags,    setFilterTags]    = useState(new Set());
     const [showTagDrop,   setShowTagDrop]   = useState(false);
     const [tagSearch,     setTagSearch]     = useState('');
@@ -5810,6 +5813,37 @@
       };
     },[nonStageFiltered]);
 
+    // Daily (or weekly, once the active range spans too many days to plot
+    // one point per day legibly) trend buckets — built from the same
+    // nonStageFiltered universe as stageSummary above, so the chart agrees
+    // with the tiles and reacts to the same period/vendor/payment/campaign
+    // filters, independent of the stage pill.
+    const trendData = useMemo(()=>{
+      const DISPATCHED_STAGES = ['ready','pickup','transit','ofd','delivered','rto','stuck'];
+      if(nonStageFiltered.length===0) return { points:[], granularity:'day' };
+      const dayTs = o => new Date(o.date).setHours(0,0,0,0);
+      const times = nonStageFiltered.map(dayTs);
+      const minD = Math.min(...times), maxD = Math.max(...times);
+      const spanDays = Math.round((maxD-minD)/86400000)+1;
+      const granularity = spanDays>56 ? 'week' : 'day';
+      const bucketKey = (t) => granularity==='day' ? t : minD + Math.floor((t-minD)/(7*86400000))*7*86400000;
+      const buckets = new Map();
+      nonStageFiltered.forEach(o=>{
+        const k = bucketKey(dayTs(o));
+        if(!buckets.has(k)) buckets.set(k,{ t:k, revenue:0, count:0,
+          cancelled:{c:0,a:0}, dispatched:{c:0,a:0}, delivered:{c:0,a:0}, rto:{c:0,a:0} });
+        const b = buckets.get(k);
+        const val = o.orderValue||0;
+        const st = o.stage||'new';
+        b.revenue += val; b.count++;
+        if(st==='cancelled'){ b.cancelled.c++; b.cancelled.a+=val; }
+        if(st==='delivered'){ b.delivered.c++; b.delivered.a+=val; }
+        if(st==='rto'){ b.rto.c++; b.rto.a+=val; }
+        if(DISPATCHED_STAGES.includes(st)){ b.dispatched.c++; b.dispatched.a+=val; }
+      });
+      return { points:[...buckets.values()].sort((a,b)=>a.t-b.t), granularity };
+    },[nonStageFiltered]);
+
     const pages = Math.max(1,Math.ceil(filtered.length/PER));
     const cur   = Math.min(page,pages);
     const rows  = filtered.slice((cur-1)*PER, cur*PER);
@@ -5919,6 +5953,93 @@
       </div>
     );
 
+    // Fixed categorical order (blue/orange/aqua/yellow) — validated
+    // colorblind-safe adjacent sequence, kept in this exact order rather
+    // than reassigned by meaning (e.g. red for cancelled) so the mapping
+    // never has to be re-validated.
+    const TREND_SERIES = [
+      { key:'cancelled',  label:'Cancelled',  color:'#2a78d6' },
+      { key:'dispatched', label:'Dispatched', color:'#eb6834' },
+      { key:'delivered',  label:'Delivered',  color:'#1baf7a' },
+      { key:'rto',        label:'RTO',        color:'#eda100' },
+    ];
+    const TrendChart = ({ points, granularity, metric, setMetric, visible, setVisible, hoverIdx, setHoverIdx }) => {
+      const W=960, H=200, padL=48, padR=12, padT=10, padB=24;
+      const innerW = W-padL-padR, innerH = H-padT-padB;
+      const getVal = (p,key) => metric==='revenue' ? p[key].a : p[key].c;
+      const activeSeries = TREND_SERIES.filter(s=>visible.has(s.key));
+      const maxY = Math.max(1, ...points.flatMap(p=>activeSeries.map(s=>getVal(p,s.key))), 1);
+      const x = (i) => points.length<=1 ? padL+innerW/2 : padL + (i/(points.length-1))*innerW;
+      const y = (v) => padT + innerH - (Math.min(v,maxY)/maxY)*innerH;
+      const fmtX = (t) => granularity==='day'
+        ? new Date(t).toLocaleDateString('en-IN',{day:'numeric',month:'short'})
+        : `wk ${new Date(t).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}`;
+      const fmtY = (v) => metric==='revenue'
+        ? (v>=100000?`₹${(v/100000).toFixed(1)}L`:v>=1000?`₹${(v/1000).toFixed(1)}k`:`₹${Math.round(v)}`)
+        : Math.round(v);
+      const ticks = 4;
+      const tickVals = Array.from({length:ticks+1},(_,i)=>Math.round(maxY*i/ticks));
+      const active = hoverIdx!=null && points[hoverIdx] ? points[hoverIdx] : null;
+      const labelEvery = Math.max(1, Math.ceil(points.length/7));
+      return (
+        <div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
+            <div style={{display:'flex',gap:4}}>
+              {[['revenue','Revenue'],['orders','Order Count']].map(([m,lbl])=>(
+                <button key={m} onClick={()=>setMetric(m)} style={{fontSize:10,fontWeight:700,padding:'4px 10px',borderRadius:6,border:'1px solid var(--border)',background:metric===m?'#111':'#fff',color:metric===m?'#fff':'var(--text-muted)',cursor:'pointer'}}>{lbl}</button>
+              ))}
+            </div>
+            <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+              {TREND_SERIES.map(s=>{
+                const on = visible.has(s.key);
+                return (
+                  <button key={s.key} onClick={()=>setVisible(v=>{ const n=new Set(v); n.has(s.key)?n.delete(s.key):n.add(s.key); return n; })}
+                    style={{display:'flex',alignItems:'center',gap:5,fontSize:10,fontWeight:600,background:'transparent',border:'none',cursor:'pointer',opacity:on?1:0.35,padding:0}}>
+                    <span style={{width:9,height:9,borderRadius:2,background:s.color,display:'inline-block'}}/>
+                    <span style={{color:'var(--text)'}}>{s.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:6,minHeight:15}}>
+            {active ? (
+              <span><b style={{color:'var(--text)'}}>{fmtX(active.t)}</b> — {activeSeries.map(s=>`${s.label} ${metric==='revenue'?`₹${Math.round(active[s.key].a).toLocaleString('en-IN')}`:active[s.key].c}`).join(' · ')}</span>
+            ) : <span>Hover the chart for a day-by-day breakdown</span>}
+          </div>
+
+          {points.length===0 ? (
+            <div style={{padding:'28px 0',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No orders in this range</div>
+          ) : (
+            <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:190,overflow:'visible',display:'block'}} onMouseLeave={()=>setHoverIdx(null)}>
+              {tickVals.map((tv,i)=>(
+                <g key={i}>
+                  <line x1={padL} x2={W-padR} y1={y(tv)} y2={y(tv)} stroke="var(--border)" strokeWidth={1} opacity={0.6}/>
+                  <text x={2} y={y(tv)+3} fontSize={9} fill="var(--text-muted)">{fmtY(tv)}</text>
+                </g>
+              ))}
+              {hoverIdx!=null && <line x1={x(hoverIdx)} x2={x(hoverIdx)} y1={padT} y2={H-padB} stroke="var(--text-muted)" strokeWidth={1} strokeDasharray="3,3"/>}
+              {activeSeries.map(s=>{
+                const d = points.map((p,i)=>`${i===0?'M':'L'} ${x(i)} ${y(getVal(p,s.key))}`).join(' ');
+                return <path key={s.key} d={d} fill="none" stroke={s.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>;
+              })}
+              {hoverIdx!=null && activeSeries.map(s=>(
+                <circle key={s.key} cx={x(hoverIdx)} cy={y(getVal(points[hoverIdx],s.key))} r={3} fill={s.color} stroke="#fff" strokeWidth={1.5}/>
+              ))}
+              {points.map((p,i)=>(
+                <rect key={i} x={padL + (i/points.length)*innerW} y={padT} width={innerW/points.length} height={innerH}
+                  fill="transparent" onMouseEnter={()=>setHoverIdx(i)}/>
+              ))}
+              {points.map((p,i)=> (i%labelEvery===0 || i===points.length-1) ? (
+                <text key={i} x={x(i)} y={H-6} fontSize={9} fill="var(--text-muted)" textAnchor="middle">{fmtX(p.t)}</text>
+              ) : null)}
+            </svg>
+          )}
+        </div>
+      );
+    };
+
     return (
       <div className="page" style={{padding: isMobile?'0':undefined}}>
 
@@ -5963,6 +6084,19 @@
                 <MiniStat label="Returned" stat={stageSummary.returned}/>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Trend chart — same nonStageFiltered universe as the summary
+            box above, so it moves with period/vendor/payment/campaign
+            filters but ignores the stage pill. ── */}
+        {!isMobile && (
+          <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:14}}>
+            <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:10}}>📈 Trend</div>
+            <TrendChart points={trendData.points} granularity={trendData.granularity}
+              metric={trendMetric} setMetric={setTrendMetric}
+              visible={trendVisible} setVisible={setTrendVisible}
+              hoverIdx={trendHoverIdx} setHoverIdx={setTrendHoverIdx}/>
           </div>
         )}
 
