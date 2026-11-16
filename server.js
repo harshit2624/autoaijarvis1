@@ -19375,13 +19375,21 @@ function shipsagarStatusToStage(desc) {
   // Delivery" AND "Refusal Confirmation Code Verified" — a real courier
   // phrase that the exact word "refused" alone misses entirely. A refusal
   // reliably means the shipment is headed back to origin.
-  // 'pickup cancelled' deliberately removed from this bucket (was here
-  // until 2026-10-18) — it means the courier never actually took custody of
-  // the package at all, which is a different real-world event than RTO
-  // (RTO implies it WAS in motion and the delivery attempt failed). See
-  // shipsagarIsPickupFailure() below, which routes this family of phrases
-  // to the new 'stuck' stage instead.
-  if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('return is initiated') || s.includes('out for return') || s.includes('return to shipper') || s.includes('back to the seller') || s.includes('back to seller') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('refus')) return 'rto';
+  // 'pickup cancelled' and its sibling phrases (not picked, cancelled by
+  // seller, cancelled on request, pickup rejected, seller requested
+  // cancellation) were removed from this bucket on 2026-10-18 with the
+  // INTENT of routing them to 'stuck' instead of 'rto' via
+  // shipsagarIsPickupFailure() below — but that rerouting only runs inside
+  // syncShipSagarStage's `if (newStage === 'rto')` block, which never
+  // executes if this function returns null for them in the first place.
+  // Net effect: removing them here didn't reroute anything, it just made
+  // them match NOTHING — the stage froze forever at whatever it was
+  // before, with no further updates ever applied. Confirmed live on order
+  // #3729/SICOS: AWB's real last scan was a bare "Not Picked" on 28-Oct,
+  // stage stuck at 'ofd' ever since. Restored here so these phrases flow
+  // into the 'rto' branch again, which the downstream reroute then
+  // correctly converts to 'stuck' as originally intended.
+  if (s.includes('rto') || s.includes('return to origin') || s.includes('returned to origin') || s.includes('return initiated') || s.includes('return is initiated') || s.includes('out for return') || s.includes('return to shipper') || s.includes('back to the seller') || s.includes('back to seller') || s.includes('delivered seller') || s.includes('delivered to seller') || s.includes('return as per') || s === 'returned' || s.includes('refus') || s.includes('not picked') || s.includes('pickup cancelled') || s.includes('cancelled by seller') || s.includes('cancelled on request') || s.includes('pickup rejected') || s.includes('seller requested cancellation')) return 'rto';
   if (s.includes('successfully delivered') || (s.includes('delivered') && !s.includes('out for') && !s.includes('undeliver') && !s.includes('not deliver'))) return 'delivered';
   if (s.includes('lost') || s.includes('damage'))               return 'rto';
   // "Dispatched — Our executive X is on their way to deliver" is a LOCAL
