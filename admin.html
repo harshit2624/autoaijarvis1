@@ -5626,6 +5626,7 @@
     // Extra filters
     const [filterVendor,  setFilterVendor]  = useState('all');
     const [filterPayment, setFilterPayment] = useState('all'); // all | prepaid | cod | advance
+    const [filterCampaign, setFilterCampaign] = useState('all'); // all | '__none__' (direct/no campaign) | a real campaign name
     const [filterTags,    setFilterTags]    = useState(new Set());
     const [showTagDrop,   setShowTagDrop]   = useState(false);
     const [tagSearch,     setTagSearch]     = useState('');
@@ -5730,26 +5731,79 @@
       return [...s].sort();
     },[orders]);
 
+    const allCampaignNames = useMemo(()=>{
+      const s = new Set();
+      orders.forEach(o=>{ if(o.adCampaign) s.add(o.adCampaign); });
+      return [...s].sort();
+    },[orders]);
+
     const allOrderTags = useMemo(()=>{
       const s = new Set();
       periodOrders.forEach(o=>(o.tags||'').split(',').map(t=>t.trim()).filter(Boolean).forEach(t=>s.add(t)));
       return [...s].sort();
     },[periodOrders]);
 
-    const filtered = useMemo(()=>{
+    // Every filter EXCEPT the stage pill — this is the "universe" the new
+    // header summary box is computed from, so it always shows the full
+    // stage breakdown of whatever period/vendor/payment/tags/campaign is
+    // selected, independent of which single stage pill happens to be
+    // highlighted right now (selecting one stage pill to narrow the TABLE
+    // rows shouldn't collapse the breakdown box down to just that one
+    // stage — that would make the box pointless the moment you use it).
+    const nonStageFiltered = useMemo(()=>{
       let l=[...periodOrders];
-      if(stage && stage!=='all') l=l.filter(o=>orderMatchesStage(o,stage));
       if(search.trim()){const q=search.toLowerCase(); l=l.filter(o=>(o.id||'').toLowerCase().includes(q)||String(o.shopifyId||'').includes(q)||(o.customer||'').toLowerCase().includes(q)||(o.vendors||[]).some(v=>v.toLowerCase().includes(q)));}
       if(filterVendor!=='all') l=l.filter(o=>(o.vendors||[]).includes(filterVendor));
       if(filterPayment==='prepaid') l=l.filter(o=>o.paymentType==='prepaid');
       if(filterPayment==='cod')     l=l.filter(o=>o.paymentType!=='prepaid' && !(o.advancePaid>0));
       if(filterPayment==='advance') l=l.filter(o=>o.advancePaid>0);
+      if(filterCampaign==='__none__') l=l.filter(o=>!o.adCampaign);
+      else if(filterCampaign!=='all') l=l.filter(o=>o.adCampaign===filterCampaign);
       if(filterTags.size>0){
         const orderTags = o => new Set((o.tags||'').split(',').map(t=>t.trim()).filter(Boolean));
         l=l.filter(o=>{ const ot=orderTags(o); return [...filterTags].every(t=>ot.has(t)); });
       }
       return l;
-    },[periodOrders,stage,search,filterVendor,filterPayment,filterTags]);
+    },[periodOrders,search,filterVendor,filterPayment,filterCampaign,filterTags]);
+
+    const filtered = useMemo(()=>{
+      if(!stage || stage==='all') return nonStageFiltered;
+      return nonStageFiltered.filter(o=>orderMatchesStage(o,stage));
+    },[nonStageFiltered,stage]);
+
+    // Full stage breakdown for the header summary box — computed from
+    // nonStageFiltered (period/vendor/payment/campaign/tags applied, stage
+    // pill NOT applied) so it stays a stable "whole picture" reference no
+    // matter which single stage pill is currently highlighted for the
+    // table below. Bucketed by each order's own top-level `stage` (the
+    // same field the Stage column's badge already shows), so these counts
+    // always agree with what's visible elsewhere on this page.
+    const stageSummary = useMemo(()=>{
+      const DISPATCHED_STAGES = ['ready','pickup','transit','ofd','delivered','rto','stuck'];
+      const buckets = {};
+      let totalCount=0, totalAmount=0, dispatchedCount=0, dispatchedAmount=0;
+      nonStageFiltered.forEach(o=>{
+        const st = o.stage || 'new';
+        const val = o.orderValue||0;
+        if(!buckets[st]) buckets[st] = {count:0, amount:0};
+        buckets[st].count++; buckets[st].amount += val;
+        totalCount++; totalAmount += val;
+        if(DISPATCHED_STAGES.includes(st)) { dispatchedCount++; dispatchedAmount += val; }
+      });
+      const pct = (n,d)=> d>0 ? +(n/d*100).toFixed(1) : 0;
+      const get = (key) => {
+        const b = buckets[key] || {count:0,amount:0};
+        return { count:b.count, amount:b.amount, pctAll: pct(b.count,totalCount), pctDispatched: pct(b.count,dispatchedCount) };
+      };
+      return {
+        totalCount, totalAmount,
+        dispatched: { count:dispatchedCount, amount:dispatchedAmount, pctAll: pct(dispatchedCount,totalCount) },
+        cancelled: get('cancelled'), transit: get('transit'), delivered: get('delivered'), rto: get('rto'), stuck: get('stuck'),
+        newStage: get('new'), confirmed: get('confirmed'), partial: get('partial'),
+        ready: get('ready'), pickup: get('pickup'), ofd: get('ofd'),
+        hold: get('hold'), misc: get('misc'), returned: get('returned'),
+      };
+    },[nonStageFiltered]);
 
     const pages = Math.max(1,Math.ceil(filtered.length/PER));
     const cur   = Math.min(page,pages);
@@ -5834,8 +5888,71 @@
       );
     };
 
+    // One card for the summary box — count, amount, and up to two
+    // percentages (of the whole filtered universe, and of dispatched
+    // orders specifically — only meaningful for stages that are actually
+    // part of the post-dispatch funnel).
+    const SummaryCard = ({label, icon, color, stat, showDispatchedPct}) => (
+      <div style={{flex:'1 1 150px',minWidth:140,background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 12px'}}>
+        <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.4,marginBottom:4,display:'flex',alignItems:'center',gap:4}}>
+          <span>{icon}</span>{label}
+        </div>
+        <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:2}}>
+          <span style={{fontSize:19,fontWeight:800,color}}>{stat.count}</span>
+          <span style={{fontSize:11,color:'var(--text-dim)'}}>₹{Math.round(stat.amount).toLocaleString('en-IN')}</span>
+        </div>
+        <div style={{fontSize:9.5,color:'var(--text-muted)'}}>
+          {stat.pctAll}% of all{showDispatchedPct ? ` · ${stat.pctDispatched}% of dispatched` : ''}
+        </div>
+      </div>
+    );
+    const MiniStat = ({label, stat}) => (
+      <div style={{flex:'1 1 100px',minWidth:90}}>
+        <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.3,marginBottom:2}}>{label}</div>
+        <div style={{fontSize:13,fontWeight:700,color:'var(--text)'}}>{stat.count} <span style={{fontSize:10,fontWeight:400,color:'var(--text-muted)'}}>· ₹{Math.round(stat.amount).toLocaleString('en-IN')}</span></div>
+        <div style={{fontSize:9,color:'var(--text-muted)'}}>{stat.pctAll}% of all</div>
+      </div>
+    );
+
     return (
       <div className="page" style={{padding: isMobile?'0':undefined}}>
+
+        {/* ── Order Summary — full stage breakdown of whatever
+            period/vendor/payment/campaign/tags filters are active, stays
+            stable regardless of which stage pill is highlighted below. ── */}
+        {!isMobile && (
+          <div style={{background:'rgba(99,102,241,.06)',border:'1px solid rgba(99,102,241,.2)',borderRadius:10,padding:'14px 16px',marginBottom:14}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:10,flexWrap:'wrap',gap:8}}>
+              <div style={{display:'flex',alignItems:'baseline',gap:10}}>
+                <span style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5}}>📋 Order Summary</span>
+                <span style={{fontSize:20,fontWeight:900,color:'var(--indigo)'}}>{stageSummary.totalCount}</span>
+                <span style={{fontSize:11,color:'var(--text-muted)'}}>orders · <b style={{color:'var(--text)'}}>₹{Math.round(stageSummary.totalAmount).toLocaleString('en-IN')}</b> total value</span>
+              </div>
+              {(period || filterVendor!=='all' || filterPayment!=='all' || filterCampaign!=='all') && (
+                <span style={{fontSize:9,color:'var(--text-muted)',fontStyle:'italic'}}>reflects active filters below (not the stage pill)</span>
+              )}
+            </div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:10}}>
+              <SummaryCard label="Cancelled" icon="✕" color="var(--red)" stat={stageSummary.cancelled}/>
+              <SummaryCard label="Dispatched" icon="📦" color="var(--teal)" stat={stageSummary.dispatched}/>
+              <SummaryCard label="In Transit" icon="🚚" color="var(--orange)" stat={stageSummary.transit} showDispatchedPct/>
+              <SummaryCard label="Delivered" icon="✅" color="var(--green)" stat={stageSummary.delivered} showDispatchedPct/>
+              <SummaryCard label="RTO" icon="↩" color="var(--red)" stat={stageSummary.rto} showDispatchedPct/>
+            </div>
+            <div style={{display:'flex',gap:14,flexWrap:'wrap',paddingTop:10,borderTop:'1px dashed var(--border)'}}>
+              <MiniStat label="New" stat={stageSummary.newStage}/>
+              <MiniStat label="Confirmed" stat={stageSummary.confirmed}/>
+              <MiniStat label="Partial" stat={stageSummary.partial}/>
+              <MiniStat label="Ready" stat={stageSummary.ready}/>
+              <MiniStat label="Pickup Pending" stat={stageSummary.pickup}/>
+              <MiniStat label="Out for Delivery" stat={stageSummary.ofd}/>
+              <MiniStat label="Stuck" stat={stageSummary.stuck}/>
+              <MiniStat label="Hold" stat={stageSummary.hold}/>
+              <MiniStat label="Misc" stat={stageSummary.misc}/>
+              <MiniStat label="Returned" stat={stageSummary.returned}/>
+            </div>
+          </div>
+        )}
 
         {/* Sticky header: search + stage tabs */}
         <div style={{position: isMobile?'sticky':'static', top: isMobile?54:undefined, zIndex:50,
@@ -5885,6 +6002,15 @@
               value={filterVendor} onChange={e=>{setFilterVendor(e.target.value);setPage(1);}}>
               <option value="all">All Vendors</option>
               {allVendorNames.map(v=><option key={v} value={v}>{v}</option>)}
+            </select>
+            {/* Campaign/Ad filter — which Meta campaign (or none, for
+                direct/organic) actually drove this order, via UTM
+                attribution already captured on order_meta.ad_campaign. */}
+            <select style={{fontSize:11,padding:'4px 8px',background:'var(--bg-card2)',border:'1px solid var(--border)',borderRadius:6,color:filterCampaign!=='all'?'var(--indigo)':'var(--text-muted)',fontFamily:'var(--font-family)',cursor:'pointer',maxWidth:180}}
+              value={filterCampaign} onChange={e=>{setFilterCampaign(e.target.value);setPage(1);}}>
+              <option value="all">All Campaigns</option>
+              <option value="__none__">Direct / No Campaign</option>
+              {allCampaignNames.map(c=><option key={c} value={c}>{c}</option>)}
             </select>
             {/* Tag filter */}
             <div style={{position:'relative'}}>
@@ -5946,8 +6072,8 @@
                 {p==='all'?'All Payments':p==='prepaid'?'Prepaid':p==='cod'?'COD':'Advance'}
               </button>
             ))}
-            {(filterVendor!=='all'||filterPayment!=='all'||filterTags.size>0) && (
-              <button onClick={()=>{setFilterVendor('all');setFilterPayment('all');setFilterTags(new Set());setShowTagDrop(false);setPage(1);}} style={{fontSize:10,padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--red)',cursor:'pointer'}}>✕ Clear</button>
+            {(filterVendor!=='all'||filterPayment!=='all'||filterCampaign!=='all'||filterTags.size>0) && (
+              <button onClick={()=>{setFilterVendor('all');setFilterPayment('all');setFilterCampaign('all');setFilterTags(new Set());setShowTagDrop(false);setPage(1);}} style={{fontSize:10,padding:'3px 8px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--red)',cursor:'pointer'}}>✕ Clear</button>
             )}
             {!isMobile && <><span className="fcount" style={{marginLeft:'auto'}}>{filtered.length} order{filtered.length!==1?'s':''}</span>
             {syncMsg && <span style={{fontSize:10,color:syncMsg.startsWith('✓')?'var(--green)':'var(--red)',fontWeight:600}}>{syncMsg}</span>}
@@ -6059,10 +6185,10 @@
                       onChange={toggleAll}/>
                   </th>
                   <th>#</th><th>Order</th><th>Customer</th><th>Vendors</th>
-                  <th>Value</th><th>Type</th><th>Advance</th><th>Stage</th><th>Delivery</th><th>Date</th><th/>
+                  <th>Value</th><th>Type</th><th>Advance</th><th>Stage</th><th>Delivery</th><th>Date</th><th>Campaign</th><th/>
                 </tr></thead>
                 <tbody>
-                  {loading ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={12}/>) :
+                  {loading ? Array.from({length:10}).map((_,i)=><SkelRow key={i} cols={13}/>) :
                    rows.length===0 ? <tr><td colSpan={12}><div className="empty"><div className="empty-icon">📦</div><div className="empty-title">No orders found</div></div></td></tr> :
                    rows.map((o,i)=>{
                      const ds=o.deliveryStatus; const isSelected=selected.has(o.shopifyId);
@@ -6097,6 +6223,14 @@
                            <div>{fmtDate(o.date)}</div>
                            {o.settlementStatus==='paid'    && <span style={{fontSize:9,padding:'1px 5px',borderRadius:3,background:'rgba(16,185,129,0.12)',color:'#10b981',fontWeight:700,letterSpacing:0.3}}>✓ SETTLED</span>}
                            {o.settlementStatus==='pending' && <span style={{fontSize:9,padding:'1px 5px',borderRadius:3,background:'rgba(245,158,11,0.12)',color:'#f59e0b',fontWeight:700,letterSpacing:0.3}}>INV · PENDING</span>}
+                         </td>
+                         <td style={{maxWidth:130}}>
+                           {o.adCampaign ? (
+                             <div title={`${o.adCampaign}${o.adSource?` · ${o.adSource}`:''}`} style={{fontSize:11,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                               {o.adCampaign}
+                               {o.adSource && <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'capitalize'}}>{o.adSource}</div>}
+                             </div>
+                           ) : <span style={{color:'var(--text-muted)',fontSize:11}}>Direct</span>}
                          </td>
                          <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>✏</td>
                        </tr>
