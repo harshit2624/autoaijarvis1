@@ -3994,15 +3994,23 @@
     // item in yet (received_at_cc still false); once checked in, a return
     // owes a refund (admin's job) and an exchange owes a replacement
     // shipment (this is where the vendor acts — see Ship Replacement).
-    const IN_TRANSIT_STATUSES = ['approved','pickup_scheduled','pickup','picked_up','in_transit'];
+    //
+    // Return/Exchange Pending vs. In Progress: "Dispatched" in a courier
+    // scan means a pickup executive was assigned, not that it's been
+    // collected yet (same "manifested = pickup pending" rule as the
+    // forward-shipment side) — approved/pickup_scheduled/pickup is still
+    // "waiting on the courier"; picked_up/in_transit is "actually moving".
+    const PICKUP_PENDING_STATUSES = ['approved','pickup_scheduled','pickup'];
+    const MOVING_STATUSES = ['picked_up','in_transit'];
     const RR_PILLS = [
       { key:'all',              label:'All',               icon:'📋', pred: () => true },
       { key:'pending',          label:'New',                icon:'🆕', pred: rq => rq.status==='pending' },
-      { key:'return_pending',   label:'Return Pending',     icon:'↩',  pred: rq => rq.type==='return'   && IN_TRANSIT_STATUSES.includes(rq.status) },
-      { key:'exchange_pending', label:'Exchange Pending',   icon:'⇄',  pred: rq => rq.type==='exchange' && IN_TRANSIT_STATUSES.includes(rq.status) },
+      { key:'return_pending',   label:'Return Pending',     icon:'↩',  pred: rq => rq.type==='return'   && PICKUP_PENDING_STATUSES.includes(rq.status) },
+      { key:'exchange_pending', label:'Exchange Pending',   icon:'⇄',  pred: rq => rq.type==='exchange' && PICKUP_PENDING_STATUSES.includes(rq.status) },
+      { key:'ship_pending',     label:'Ship Replacement',   icon:'🔁', pred: rq => rq.type==='exchange' && !rq.forward_shipment && (rq.received_at_cc||rq.received_at_vendor||rq.reverse_delivered_at) && !['completed','rejected','cancelled'].includes(rq.status) },
+      { key:'in_progress',      label:'In Progress',        icon:'🚚', pred: rq => MOVING_STATUSES.includes(rq.status) },
       { key:'qc_pending',       label:'QC Pending',         icon:'🔍', pred: rq => ['received','received_at_warehouse'].includes(rq.status) && !rq.received_at_cc && !rq.received_at_vendor },
       { key:'refund_pending',   label:'Refund Pending',     icon:'💸', pred: rq => rq.type==='return'   && (!!rq.received_at_cc||!!rq.received_at_vendor) && rq.resolution!=='store_credit' && !['completed','rejected','cancelled'].includes(rq.status) },
-      { key:'ship_pending',     label:'Ship Replacement',   icon:'🔁', pred: rq => rq.type==='exchange' && !rq.forward_shipment && (rq.received_at_cc||rq.received_at_vendor||rq.reverse_delivered_at) && !['completed','rejected','cancelled'].includes(rq.status) },
       { key:'completed',        label:'Completed',          icon:'✅', pred: rq => rq.status==='completed' },
       { key:'rejected',         label:'Rejected/Cancelled', icon:'🚫', pred: rq => ['rejected','cancelled'].includes(rq.status) },
     ];
