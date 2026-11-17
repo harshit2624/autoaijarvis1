@@ -1297,7 +1297,10 @@
     { id:'cancelled', label:'Cancelled',      color:'red',    icon:'✕' },
     { id:'misc',      label:'Miscellaneous',  color:'gray',   icon:'◌' },
     { id:'returned',  label:'Returned',       color:'gray',   icon:'⟲' },
-    { id:'rr',        label:'Return/Exchange', color:'purple', icon:'↩' },
+    { id:'rr_return_pending',   label:'Return Pending',     color:'purple', icon:'↩' },
+    { id:'rr_exchange_pending', label:'Exchange Pending',   color:'purple', icon:'🔄' },
+    { id:'rr_returned',         label:'Return Completed',   color:'gray',   icon:'✅' },
+    { id:'rr_exchanged',        label:'Exchange Completed', color:'green',  icon:'✅' },
   ];
 
   // ── Icon sets (Minimal outline + Shapes solid) for the icon-style switcher ──
@@ -5707,7 +5710,10 @@
 
     const orderMatchesStage = (o, s) => {
       if (s === 'all') return true;
-      if (s === 'rr') return !!o.hasRR;
+      if (s === 'rr_return_pending')   return o.rrStage === 'return_pending';
+      if (s === 'rr_exchange_pending') return o.rrStage === 'exchange_pending';
+      if (s === 'rr_returned')         return o.rrStage === 'returned';
+      if (s === 'rr_exchanged')        return o.rrStage === 'exchanged';
       if (o.stage === s) return true;
       const vendorStageValues = Object.values(o.vendorStages||{});
       const isMultiVendor = vendorStageValues.length > 1;

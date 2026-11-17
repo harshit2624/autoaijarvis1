@@ -5794,6 +5794,29 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
       s.items.filter(it => it.vendor === req.vendor).forEach(it => set.add(String(it.line_item_id)));
     });
 
+    // Return/exchange pill bucket, scoped to this vendor's own requests —
+    // see the matching block in /admin/orders for why a terminal
+    // (rejected/cancelled) request has no bucket, and why an in-flight
+    // bucket wins over a completed one when an order has more than one
+    // RR doc.
+    const vendorRRRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const vRRDocs = await mdb.collection('return_requests').find(
+      { vendor_name: { $regex: vendorRRRegex } },
+      { projection: { order_name: 1, type: 1, status: 1, _id: 0 } }
+    ).toArray();
+    const vRRStageMap = {};
+    for (const r of vRRDocs) {
+      const key = (r.order_name || '').replace(/^#/, '').toLowerCase();
+      if (RR_TERMINAL_STATUSES.includes(r.status)) continue;
+      const isExchange = (r.type || '').toLowerCase() === 'exchange';
+      const bucket = r.status === 'completed'
+        ? (isExchange ? 'exchanged' : 'returned')
+        : (isExchange ? 'exchange_pending' : 'return_pending');
+      const existing = vRRStageMap[key];
+      const inFlight = (b) => b === 'return_pending' || b === 'exchange_pending';
+      if (!existing || (inFlight(bucket) && !inFlight(existing))) vRRStageMap[key] = bucket;
+    }
+
     const orders = allOrders
       .filter(o => (o.line_items || []).some(li => (li.vendor || "").toLowerCase() === vName))
       // Admin-hidden-from-this-vendor orders never reach their panel at all —
@@ -5906,6 +5929,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             const matches = myItems.map(li => vCCInvMap[String(li.variant_id)]).filter(Boolean);
             return matches.length ? matches : null;
           })(),
+          rrStage: vRRStageMap[(o.name || '').replace(/^#/, '').toLowerCase()] || null,
         };
       });
 
@@ -8344,7 +8368,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
     });
 
     // Orders that have a return/exchange request (any status) — track type per order name
-    const rrDocs = await mdb.collection('return_requests').find({}, { projection: { order_name: 1, type: 1, _id: 0 } }).toArray();
+    const rrDocs = await mdb.collection('return_requests').find({}, { projection: { order_name: 1, type: 1, status: 1, _id: 0 } }).toArray();
     const rrOrderNames = new Set(rrDocs.map(r => (r.order_name || '').replace(/^#/, '').toLowerCase()));
     // Map order_name → types set ('return','exchange')
     const rrTypeMap = {};
@@ -8352,6 +8376,27 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
       const key = (r.order_name || '').replace(/^#/, '').toLowerCase();
       if (!rrTypeMap[key]) rrTypeMap[key] = new Set();
       if (r.type) rrTypeMap[key].add(r.type.toLowerCase());
+    }
+    // Map order_name → a single pill-friendly bucket for the Orders-page
+    // RR pills (Return Pending / Exchange Pending / Return Completed /
+    // Exchange Completed). Reuses RR_TERMINAL_STATUSES from the RR engine —
+    // a rejected/cancelled request intentionally has no bucket here (it
+    // just falls back to whatever the order's own shipping stage is) so it
+    // doesn't block on a pill meant for in-flight requests. Multiple RR
+    // docs on one order (rare — e.g. two separate line items) resolve to
+    // whichever is still in-flight over one that's already done, so the
+    // order doesn't silently vanish from the "still needs action" pills.
+    const rrStageMap = {};
+    for (const r of rrDocs) {
+      const key = (r.order_name || '').replace(/^#/, '').toLowerCase();
+      if (RR_TERMINAL_STATUSES.includes(r.status)) continue;
+      const isExchange = (r.type || '').toLowerCase() === 'exchange';
+      const bucket = r.status === 'completed'
+        ? (isExchange ? 'exchanged' : 'returned')
+        : (isExchange ? 'exchange_pending' : 'return_pending');
+      const existing = rrStageMap[key];
+      const inFlight = (b) => b === 'return_pending' || b === 'exchange_pending';
+      if (!existing || (inFlight(bucket) && !inFlight(existing))) rrStageMap[key] = bucket;
     }
 
     // Real per-vendor commission rates — same lookup pattern as
@@ -8545,6 +8590,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
         })(),
         hasRR: rrOrderNames.has((o.name || '').replace(/^#/, '').toLowerCase()),
         rrTypes: [...(rrTypeMap[(o.name || '').replace(/^#/, '').toLowerCase()] || [])],
+        rrStage: rrStageMap[(o.name || '').replace(/^#/, '').toLowerCase()] || null,
       };
     });
 

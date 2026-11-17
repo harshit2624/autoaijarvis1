@@ -2214,6 +2214,10 @@
     { id:'hold',      label:'Hold',                 icon:'⏸' },
     { id:'cancelled', label:'Cancelled',            icon:'✕' },
     { id:'misc',      label:'Miscellaneous',        icon:'◌' },
+    { id:'rr_return_pending',   label:'Return Pending',     icon:'↩' },
+    { id:'rr_exchange_pending', label:'Exchange Pending',   icon:'🔄' },
+    { id:'rr_returned',         label:'Return Completed',   icon:'✅' },
+    { id:'rr_exchanged',        label:'Exchange Completed', icon:'✅' },
   ];
 
   /* ══════════════════════════════════
@@ -2244,6 +2248,10 @@
       if(search.trim()){const q=search.toLowerCase();l=l.filter(o=>o.id.toLowerCase().includes(q)||o.customer.toLowerCase().includes(q)||(o.email||'').toLowerCase().includes(q)||o.myItems.some(i=>i.title.toLowerCase().includes(q)));}
       if(stage!=='all'){
         if(stage==='confirmed') l=l.filter(o=>['confirmed','partial'].includes(o.stage||'new'));
+        else if(stage==='rr_return_pending')   l=l.filter(o=>o.rrStage==='return_pending');
+        else if(stage==='rr_exchange_pending') l=l.filter(o=>o.rrStage==='exchange_pending');
+        else if(stage==='rr_returned')         l=l.filter(o=>o.rrStage==='returned');
+        else if(stage==='rr_exchanged')        l=l.filter(o=>o.rrStage==='exchanged');
         else l=l.filter(o=>(o.stage||'new')===stage);
       }
       l.sort((a,b)=>{
@@ -2340,7 +2348,10 @@
           {/* Stage filter tabs — horizontal scroll */}
           <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:4,WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
             {STAGES.map(s=>{
-              const count = s.id==='all' ? orders.length : s.id==='confirmed' ? orders.filter(o=>['confirmed','partial'].includes(o.stage||'new')).length : orders.filter(o=>(o.stage||'new')===s.id).length;
+              const count = s.id==='all' ? orders.length
+                : s.id==='confirmed' ? orders.filter(o=>['confirmed','partial'].includes(o.stage||'new')).length
+                : s.id.startsWith('rr_') ? orders.filter(o=>o.rrStage===s.id.replace('rr_','')).length
+                : orders.filter(o=>(o.stage||'new')===s.id).length;
               return (
                 <button key={s.id} onClick={()=>{setStage(s.id);setPage(1);}} style={{
                   flexShrink:0, padding:'5px 12px', borderRadius:20, border:'none', cursor:'pointer',
