@@ -25067,6 +25067,25 @@ app.post("/admin/return-requests/:id/receive-at-cc", adminAuth, async (req, res)
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Admin: mark received at the VENDOR'S warehouse (not CC) ───────────────
+// Same gap as the vendor-side endpoint of the same name — admin needs this
+// too, for when a vendor has the item in hand but hasn't logged into their
+// own portal to confirm it.
+app.post("/admin/return-requests/:id/receive-at-warehouse", adminAuth, async (req, res) => {
+  try {
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id }, { projection: { received_at_vendor: 1, _id: 0 } });
+    if (!rr) return res.status(404).json({ error: "Request not found." });
+    if (rr.received_at_vendor) return res.status(400).json({ error: "Already marked as received at the vendor's warehouse." });
+    const now = new Date().toISOString();
+    await mdb.collection('return_requests').updateOne(
+      { request_id: req.params.id },
+      { $set: { received_at_vendor: true, received_at_vendor_at: now, updated_at: now } }
+    );
+    await rrPushHistory(req.params.id, { event: 'received_at_vendor_warehouse', note: 'Marked by admin — vendor confirmed items received at their own warehouse', source: 'admin' });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.put("/admin/return-requests/:id", adminAuth, async (req, res) => {
   try {
     const { status, admin_note, force, silent } = req.body;
@@ -25789,6 +25808,31 @@ app.put("/vendor/return-requests/:id", vendorAuth, async (req, res) => {
       }
     }
     res.json({ success: true, statusApplied: !!statusOk });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Vendor: confirm items physically received at THEIR OWN warehouse ──────
+// Most reverse shipments never touch CC at all — a vendor booking their own
+// pickup (createRRShipment's reverse leg delivers to the vendor's own
+// return_address, not a CROSCROW address) means the item lands with them
+// directly. received_at_cc only ever gets set by the CC-bound path, so
+// without this, a vendor-destined return would sit in QC Pending forever
+// even after the vendor has it in hand and has dealt with it. This is the
+// vendor-side equivalent of admin's "Mark Received at CC" — no CC
+// inventory to update here, it's the vendor's own stock.
+app.post("/vendor/return-requests/:id/receive-at-warehouse", vendorAuth, async (req, res) => {
+  try {
+    const vendorRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const rr = await mdb.collection('return_requests').findOne({ request_id: req.params.id, vendor_name: { $regex: vendorRegex } }, { projection: { received_at_vendor: 1, _id: 0 } });
+    if (!rr) return res.status(404).json({ error: 'Request not found' });
+    if (rr.received_at_vendor) return res.status(400).json({ error: 'Already marked as received at your warehouse.' });
+    const now = new Date().toISOString();
+    await mdb.collection('return_requests').updateOne(
+      { request_id: req.params.id },
+      { $set: { received_at_vendor: true, received_at_vendor_at: now, updated_at: now } }
+    );
+    await rrPushHistory(req.params.id, { event: 'received_at_vendor_warehouse', note: 'Vendor confirmed items received at their own warehouse', source: 'vendor' });
+    res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

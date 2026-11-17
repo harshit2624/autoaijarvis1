@@ -6844,7 +6844,7 @@
     const REV_LABELS = ['Picked Up','In Transit','—','Received'];
     const FWD_LABELS = ['Dispatched','In Transit','Out for Delivery','Delivered'];
     const revStep = rr.reverse_shipment?.tracking_status ? rrLegStep(rr.reverse_shipment.tracking_status) : (rr.reverse_shipment?.awb ? 0 : -1);
-    const revDone = rr.received_at_cc || rr.reverse_delivered_at || ['received','received_at_warehouse','completed'].includes(rr.status);
+    const revDone = rr.received_at_cc || rr.received_at_vendor || rr.reverse_delivered_at || ['received','received_at_warehouse','completed'].includes(rr.status);
     const fwdStarted = !!rr.forward_shipment?.awb;
     const fwdStep = rr.status === 'completed' ? 3 : (rr.forward_shipment?.tracking_status ? rrLegStep(rr.forward_shipment.tracking_status) : -1);
     const miniBar = (labels, step, started, accent) => (
@@ -6961,11 +6961,12 @@
   // for the "needs review" style stats/flags (not store-credited, not
   // completed/rejected/cancelled).
   function rrNeedsReview(rq) {
-    return !!rq.received_at_cc && rq.resolution !== 'store_credit' && !['completed','rejected','cancelled'].includes(rq.status);
+    return (!!rq.received_at_cc || !!rq.received_at_vendor) && rq.resolution !== 'store_credit' && !['completed','rejected','cancelled'].includes(rq.status);
   }
   function rrReceivedHoursSince(rq) {
-    if (!rq.received_at_cc_at) return null;
-    return (Date.now() - new Date(rq.received_at_cc_at).getTime()) / 3600000;
+    const at = rq.received_at_cc_at || rq.received_at_vendor_at;
+    if (!at) return null;
+    return (Date.now() - new Date(at).getTime()) / 3600000;
   }
 
   function ReturnRequests({ token }) {
@@ -7018,6 +7019,20 @@
         const d = await r.json();
         if (!r.ok) throw new Error(d.error);
         setMsg({ type:'success', text:`✓ Items added to CC Inventory (${d.added.length} variant${d.added.length!==1?'s':''})` });
+        load();
+      } catch(e) { setMsg({ type:'error', text: e.message }); }
+      setSaving(false);
+    };
+
+    const receiveAtWarehouse = async (id) => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/admin/return-requests/${id}/receive-at-warehouse`, {
+          method:'POST', headers:{ Authorization:`Bearer ${token}` },
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({ type:'success', text:'Marked as received at the vendor\'s warehouse.' });
         load();
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setSaving(false);
@@ -7108,9 +7123,9 @@
       { key:'pending',          label:'New',                icon:'🆕', pred: rq => rq.status==='pending' },
       { key:'return_pending',   label:'Return Pending',     icon:'↩',  pred: rq => rq.type==='return'   && IN_TRANSIT_STATUSES.includes(rq.status) },
       { key:'exchange_pending', label:'Exchange Pending',   icon:'⇄',  pred: rq => rq.type==='exchange' && IN_TRANSIT_STATUSES.includes(rq.status) },
-      { key:'qc_pending',       label:'QC Pending',         icon:'🔍', pred: rq => ['received','received_at_warehouse'].includes(rq.status) && !rq.received_at_cc },
-      { key:'refund_pending',   label:'Refund Pending',     icon:'💸', pred: rq => rq.type==='return'   && !!rq.received_at_cc && rq.resolution!=='store_credit' && !['completed','rejected','cancelled'].includes(rq.status) },
-      { key:'ship_pending',     label:'Ship Replacement',   icon:'🔁', pred: rq => rq.type==='exchange' && !rq.forward_shipment && (rq.received_at_cc||rq.reverse_delivered_at) && !['completed','rejected','cancelled'].includes(rq.status) },
+      { key:'qc_pending',       label:'QC Pending',         icon:'🔍', pred: rq => ['received','received_at_warehouse'].includes(rq.status) && !rq.received_at_cc && !rq.received_at_vendor },
+      { key:'refund_pending',   label:'Refund Pending',     icon:'💸', pred: rq => rq.type==='return'   && (!!rq.received_at_cc||!!rq.received_at_vendor) && rq.resolution!=='store_credit' && !['completed','rejected','cancelled'].includes(rq.status) },
+      { key:'ship_pending',     label:'Ship Replacement',   icon:'🔁', pred: rq => rq.type==='exchange' && !rq.forward_shipment && (rq.received_at_cc||rq.received_at_vendor||rq.reverse_delivered_at) && !['completed','rejected','cancelled'].includes(rq.status) },
       { key:'completed',        label:'Completed',          icon:'✅', pred: rq => rq.status==='completed' },
       { key:'rejected',         label:'Rejected/Cancelled', icon:'🚫', pred: rq => ['rejected','cancelled'].includes(rq.status) },
     ];
@@ -7324,7 +7339,14 @@
                     ))}
                   </div>
 
-                  {/* Honest stock states — mirrors what the courier/admin has actually verified */}
+                  {/* Honest stock states — mirrors what the courier/admin/vendor has
+                      actually verified. Most reverse shipments deliver straight to
+                      the vendor's own warehouse (createRRShipment's reverse leg
+                      uses the vendor's own return_address), not CC — so
+                      received_at_cc alone would leave those permanently stuck
+                      looking unreviewed. received_at_vendor is the vendor's own
+                      confirmation of the same thing, just without a CC inventory
+                      update since it's their stock, not ours. */}
                   {['in_transit','completed','received','received_at_warehouse'].includes(rq.status) && (
                     <div style={{marginBottom:20}}>
                       {rq.received_at_cc ? (
@@ -7340,16 +7362,33 @@
                             ↩ Re-add
                           </button>
                         </div>
+                      ) : rq.received_at_vendor ? (
+                        <div className="rr-stockline received">
+                          <span style={{fontWeight:600}}>✓ Received at the vendor's own warehouse</span>
+                          {rq.received_at_vendor_at && <span className="mono" style={{opacity:.8,fontSize:11}}>{fmtDate(rq.received_at_vendor_at)}</span>}
+                          {rq.received_at_vendor_at && rq.resolution !== 'store_credit' && rq.status !== 'completed' && (()=>{
+                            const overdue = rrReceivedHoursSince(rq) >= 20;
+                            return <span className="badge-pill sm" style={{borderColor:overdue?'var(--red)':'var(--border)',color:overdue?'var(--red)':'var(--text-muted)',marginLeft:'auto'}}>⏱ {timeSince(rq.received_at_vendor_at)}{overdue?' — review now':''}</span>;
+                          })()}
+                        </div>
                       ) : rq.reverse_delivered_at ? (
                         <div className="rr-stockline arrived">
-                          <span style={{fontWeight:600}}>📥 Courier says arrived at Kekri — not yet added to inventory</span>
+                          <span style={{fontWeight:600}}>📥 Courier says arrived — not yet checked in anywhere</span>
                           <span className="mono" style={{opacity:.8,fontSize:11}}>{fmtDate(rq.reverse_delivered_at)}</span>
-                          <button className="btn btn-primary btn-sm" style={{marginLeft:'auto'}} onClick={()=>receiveAtCC(rq.request_id)} disabled={saving}>🏬 Mark Received — Add to Inventory</button>
+                          <div style={{marginLeft:'auto',display:'flex',gap:6}}>
+                            <button className="btn btn-primary btn-sm" onClick={()=>receiveAtCC(rq.request_id)} disabled={saving}>🏬 Received at CC</button>
+                            <button className="btn btn-ghost btn-sm" onClick={()=>receiveAtWarehouse(rq.request_id)} disabled={saving}>🏭 Received at Vendor</button>
+                          </div>
                         </div>
                       ) : (
-                        <button className="btn btn-ghost btn-sm" style={{borderColor:'#fbbf24',color:'#fbbf24',fontWeight:700}} onClick={()=>receiveAtCC(rq.request_id)} disabled={saving}>
-                          🏬 Mark Received at CC — Add to Inventory
-                        </button>
+                        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                          <button className="btn btn-ghost btn-sm" style={{borderColor:'#fbbf24',color:'#fbbf24',fontWeight:700}} onClick={()=>receiveAtCC(rq.request_id)} disabled={saving}>
+                            🏬 Mark Received at CC — Add to Inventory
+                          </button>
+                          <button className="btn btn-ghost btn-sm" style={{borderColor:'var(--text-muted)',color:'var(--text-muted)',fontWeight:700}} onClick={()=>receiveAtWarehouse(rq.request_id)} disabled={saving}>
+                            🏭 Mark Received at Vendor's Warehouse
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}

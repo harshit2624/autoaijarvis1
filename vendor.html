@@ -672,6 +672,8 @@
     @media (min-width:640px) { .rr-photo { width:200px; height:200px; border-radius:12px; } }
     .rr-photo-label { font-size:10px; color:var(--text-muted); margin-top:4px; text-align:center; }
     .rr-section-label { font-size:10px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:var(--text-muted); margin-bottom:9px; }
+    .rr-stockline { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:11px 14px; border-radius:9px; font-size:12px; }
+    .rr-stockline.received { background:rgba(16,185,129,.1); color:#10b981; border:1px solid rgba(16,185,129,.3); }
 
     .rr-infogrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin-bottom:20px; }
     .rr-infocell .k { font-size:10px; color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; margin-bottom:3px; }
@@ -3780,11 +3782,12 @@
   // Mirrors admin.html's copy — whether an RR is checked in but still
   // unresolved (not store-credited, not completed/rejected/cancelled).
   function rrNeedsReview(rq) {
-    return !!rq.received_at_cc && rq.resolution !== 'store_credit' && !['completed','rejected','cancelled'].includes(rq.status);
+    return (!!rq.received_at_cc || !!rq.received_at_vendor) && rq.resolution !== 'store_credit' && !['completed','rejected','cancelled'].includes(rq.status);
   }
   function rrReceivedHoursSince(rq) {
-    if (!rq.received_at_cc_at) return null;
-    return (Date.now() - new Date(rq.received_at_cc_at).getTime()) / 3600000;
+    const at = rq.received_at_cc_at || rq.received_at_vendor_at;
+    if (!at) return null;
+    return (Date.now() - new Date(at).getTime()) / 3600000;
   }
 
   function RRProgressBar({ status, resolution }) {
@@ -3855,7 +3858,7 @@
     const REV_LABELS = ['Picked Up','In Transit','—','Received'];
     const FWD_LABELS = ['Dispatched','In Transit','Out for Delivery','Delivered'];
     const revStep = rr.reverse_shipment?.tracking_status ? rrLegStep(rr.reverse_shipment.tracking_status) : (rr.reverse_shipment?.awb ? 0 : -1);
-    const revDone = rr.received_at_cc || rr.reverse_delivered_at || ['received','received_at_warehouse','completed'].includes(rr.status);
+    const revDone = rr.received_at_cc || rr.received_at_vendor || rr.reverse_delivered_at || ['received','received_at_warehouse','completed'].includes(rr.status);
     const fwdStarted = !!rr.forward_shipment?.awb;
     const fwdStep = rr.status === 'completed' ? 3 : (rr.forward_shipment?.tracking_status ? rrLegStep(rr.forward_shipment.tracking_status) : -1);
     const miniBar = (labels, step, started, accent) => (
@@ -3969,6 +3972,18 @@
       setSaving(false);
     };
 
+    const receiveAtWarehouse = async (id) => {
+      setSaving(true); setMsg(null);
+      try {
+        const r = await fetch(`${API}/vendor/return-requests/${id}/receive-at-warehouse`, { method:'POST', headers:{ Authorization:`Bearer ${token}` } });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        setMsg({type:'success', text:'Marked as received at your warehouse.'});
+        load();
+      } catch(e) { setMsg({type:'error', text:e.message}); }
+      setSaving(false);
+    };
+
     const TYPE_COLOR = { return:'var(--blue)', exchange:'var(--green)' };
     const STATUS_COLOR = { pending:'#f59e0b', approved:'#22c55e', pickup_scheduled:'#eab308', pickup:'#eab308', picked_up:'#3b82f6', in_transit:'#6366f1', received:'#06b6d4', received_at_warehouse:'#06b6d4', completed:'#10b981', rejected:'#ef4444', cancelled:'#6b7280' };
     const pillStyle = c => ({ borderColor:c, color:c, background:`color-mix(in srgb, ${c} 14%, transparent)` });
@@ -3985,9 +4000,9 @@
       { key:'pending',          label:'New',                icon:'🆕', pred: rq => rq.status==='pending' },
       { key:'return_pending',   label:'Return Pending',     icon:'↩',  pred: rq => rq.type==='return'   && IN_TRANSIT_STATUSES.includes(rq.status) },
       { key:'exchange_pending', label:'Exchange Pending',   icon:'⇄',  pred: rq => rq.type==='exchange' && IN_TRANSIT_STATUSES.includes(rq.status) },
-      { key:'qc_pending',       label:'QC Pending',         icon:'🔍', pred: rq => ['received','received_at_warehouse'].includes(rq.status) && !rq.received_at_cc },
-      { key:'refund_pending',   label:'Refund Pending',     icon:'💸', pred: rq => rq.type==='return'   && !!rq.received_at_cc && rq.resolution!=='store_credit' && !['completed','rejected','cancelled'].includes(rq.status) },
-      { key:'ship_pending',     label:'Ship Replacement',   icon:'🔁', pred: rq => rq.type==='exchange' && !rq.forward_shipment && (rq.received_at_cc||rq.reverse_delivered_at) && !['completed','rejected','cancelled'].includes(rq.status) },
+      { key:'qc_pending',       label:'QC Pending',         icon:'🔍', pred: rq => ['received','received_at_warehouse'].includes(rq.status) && !rq.received_at_cc && !rq.received_at_vendor },
+      { key:'refund_pending',   label:'Refund Pending',     icon:'💸', pred: rq => rq.type==='return'   && (!!rq.received_at_cc||!!rq.received_at_vendor) && rq.resolution!=='store_credit' && !['completed','rejected','cancelled'].includes(rq.status) },
+      { key:'ship_pending',     label:'Ship Replacement',   icon:'🔁', pred: rq => rq.type==='exchange' && !rq.forward_shipment && (rq.received_at_cc||rq.received_at_vendor||rq.reverse_delivered_at) && !['completed','rejected','cancelled'].includes(rq.status) },
       { key:'completed',        label:'Completed',          icon:'✅', pred: rq => rq.status==='completed' },
       { key:'rejected',         label:'Rejected/Cancelled', icon:'🚫', pred: rq => ['rejected','cancelled'].includes(rq.status) },
     ];
@@ -4174,6 +4189,29 @@
                   )}
 
                   {rq.admin_note && <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:16}}>Admin note: <span style={{color:'var(--yellow)'}}>{rq.admin_note}</span></div>}
+
+                  {/* Most reverse shipments deliver straight to the vendor's own
+                      warehouse, not CC — this is how a vendor confirms they
+                      actually have the item in hand, independent of whether
+                      admin ever sees it at CC. */}
+                  {['in_transit','completed','received','received_at_warehouse'].includes(rq.status) && (
+                    <div style={{marginBottom:20}}>
+                      {rq.received_at_vendor ? (
+                        <div className="rr-stockline received">
+                          <span style={{fontWeight:600}}>✓ Received at your warehouse</span>
+                          {rq.received_at_vendor_at && <span className="mono" style={{opacity:.8,fontSize:11}}>{rq.received_at_vendor_at.split('T')[0]}</span>}
+                        </div>
+                      ) : rq.received_at_cc ? (
+                        <div className="rr-stockline received">
+                          <span style={{fontWeight:600}}>✓ Received at CROSCROW CC</span>
+                        </div>
+                      ) : (
+                        <button className="btn btn-ghost btn-sm" style={{borderColor:'#fbbf24',color:'#fbbf24',fontWeight:700}} onClick={()=>receiveAtWarehouse(rq.request_id)} disabled={saving}>
+                          🏬 Mark Received at My Warehouse
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   <div className="rr-section-label">Shipping</div>
                   <RRShipmentPanel token={token} rr={rq} onUpdated={load} />
