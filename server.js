@@ -29189,6 +29189,27 @@ app.options('/mine-game/claim', (req, res) => {
 
 const PIXEL_EVENT_NAMES = ['ViewContent', 'AddToCart', 'InitiateCheckout', 'Purchase'];
 
+// Same-length period immediately before [from, to] — e.g. "last 7 days"
+// compares against the 7 days before that, so a lopsided comparison (this
+// week vs. a random earlier month) never happens. Falls back to the day
+// before `from` only when no `to` is given.
+function pixelPrevRange(from, to) {
+  if (!from) return { prevFrom: null, prevTo: null };
+  const fromD = new Date(`${from}T00:00:00.000Z`);
+  const toD = to ? new Date(`${to}T00:00:00.000Z`) : fromD;
+  const spanDays = Math.round((toD - fromD) / 86400000) + 1;
+  const prevTo = new Date(fromD.getTime() - 86400000);
+  const prevFrom = new Date(prevTo.getTime() - (spanDays - 1) * 86400000);
+  return { prevFrom: prevFrom.toISOString().slice(0, 10), prevTo: prevTo.toISOString().slice(0, 10) };
+}
+// pct change, current vs. previous — previous being 0 with any current
+// value reads as "+100%" (new activity), both being 0 reads as 0 (no
+// change) rather than a NaN/Infinity the UI would have to special-case.
+function pctChange(cur, prev) {
+  if (!prev) return cur > 0 ? 100 : 0;
+  return +(((cur - prev) / prev) * 100).toFixed(1);
+}
+
 function pixelDateRange(from, to) {
   // pixel_events.created_at IS stored as a proper UTC "Z" timestamp (unlike
   // order_meta.shopify_created_at), so no string-format mismatch here — but
@@ -29740,28 +29761,44 @@ app.get('/admin/pixel-tracker/product-search', adminAuth, async (req, res) => {
 });
 
 // ── Summary stat cards (views / ATC / checkout / purchases + funnel rates) ─
+// Runs the exact same event-count aggregation for an arbitrary [from,to] —
+// shared by the current-period and prior-period calls below so they're
+// guaranteed to compute every rate the same way.
+async function pixelSummaryFor(from, to, vendor, collection) {
+  const match = pixelDateRange(from, to);
+  if (vendor) match.vendor = vendor;
+  if (collection) Object.assign(match, await pixelCollectionMatch(collection));
+  const rows = await mdb.collection('pixel_events').aggregate([
+    { $match: match },
+    { $group: { _id: '$eventName', count: { $sum: 1 }, value: { $sum: { $ifNull: ['$value', 0] } } } },
+  ]).toArray();
+  const byEvent = Object.fromEntries(rows.map(r => [r._id, r.count]));
+  const views = byEvent.ViewContent || 0, atc = byEvent.AddToCart || 0, checkout = byEvent.InitiateCheckout || 0, purchases = byEvent.Purchase || 0;
+  const purchaseValue = rows.find(r => r._id === 'Purchase')?.value || 0;
+  // "Buy Now" skips the cart so checkout can exceed atc — use effectiveAtc = max(atc, checkout)
+  // so ratios never exceed 100% and Buy Now sessions are counted as purchase intent.
+  const effectiveAtc = Math.max(atc, checkout);
+  return {
+    views, atc, checkout, purchases, purchaseValue,
+    viewToAtcRate: views ? (effectiveAtc / views) * 100 : 0,
+    viewToCheckoutRate: views ? (checkout / views) * 100 : 0,
+    atcToCheckoutRate: effectiveAtc ? (checkout / effectiveAtc) * 100 : 0,
+    checkoutToPurchaseRate: checkout ? (purchases / checkout) * 100 : 0,
+    viewToPurchaseRate: views ? (purchases / views) * 100 : 0,
+  };
+}
+
 app.get('/admin/pixel-tracker/summary', adminAuth, async (req, res) => {
   try {
-    const match = pixelDateRange(req.query.from, req.query.to);
-    if (req.query.vendor) match.vendor = req.query.vendor;
-    if (req.query.collection) Object.assign(match, await pixelCollectionMatch(req.query.collection));
-    const rows = await mdb.collection('pixel_events').aggregate([
-      { $match: match },
-      { $group: { _id: '$eventName', count: { $sum: 1 }, value: { $sum: { $ifNull: ['$value', 0] } } } },
-    ]).toArray();
-    const byEvent = Object.fromEntries(rows.map(r => [r._id, r.count]));
-    const views = byEvent.ViewContent || 0, atc = byEvent.AddToCart || 0, checkout = byEvent.InitiateCheckout || 0, purchases = byEvent.Purchase || 0;
-    const purchaseValue = rows.find(r => r._id === 'Purchase')?.value || 0;
-    // "Buy Now" skips the cart so checkout can exceed atc — use effectiveAtc = max(atc, checkout)
-    // so ratios never exceed 100% and Buy Now sessions are counted as purchase intent.
-    const effectiveAtc = Math.max(atc, checkout);
-    res.json({
-      views, atc, checkout, purchases, purchaseValue,
-      viewToAtcRate: views ? (effectiveAtc / views) * 100 : 0,
-      atcToCheckoutRate: effectiveAtc ? (checkout / effectiveAtc) * 100 : 0,
-      checkoutToPurchaseRate: checkout ? (purchases / checkout) * 100 : 0,
-      viewToPurchaseRate: views ? (purchases / views) * 100 : 0,
-    });
+    const { from, to, vendor, collection } = req.query;
+    const current = await pixelSummaryFor(from, to, vendor, collection);
+    const { prevFrom, prevTo } = pixelPrevRange(from, to);
+    const previous = prevFrom ? await pixelSummaryFor(prevFrom, prevTo, vendor, collection) : null;
+    const change = previous ? Object.fromEntries(
+      ['views','atc','checkout','purchases','viewToAtcRate','viewToCheckoutRate','atcToCheckoutRate','checkoutToPurchaseRate','viewToPurchaseRate']
+        .map(k => [k, pctChange(current[k], previous[k])])
+    ) : null;
+    res.json({ ...current, previous, change, prevPeriod: prevFrom ? { from: prevFrom, to: prevTo } : null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

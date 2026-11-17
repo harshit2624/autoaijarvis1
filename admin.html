@@ -15457,6 +15457,17 @@
       { id:'viewToPurchaseRate',     label:'View → Purchase (overall)' },
     ];
 
+    // Small "+12% vs prior period" badge, reused on every stat/rate card.
+    // Null/undefined pct (no previous-period data yet) renders nothing
+    // rather than a misleading "0%".
+    const DeltaBadge = ({ pct }) => {
+      if (pct === null || pct === undefined || !isFinite(pct)) return null;
+      const up = pct > 0, flat = Math.abs(pct) < 0.05;
+      const color = flat ? 'var(--text-muted)' : up ? '#10b981' : '#ef4444';
+      const arrow = flat ? '→' : up ? '↑' : '↓';
+      return <span style={{fontWeight:700,color}}>{arrow} {Math.abs(pct).toFixed(1)}% <span style={{fontWeight:400,opacity:.75}}>vs prior</span></span>;
+    };
+
     const elapsed = (iso) => {
       const secs = Math.floor((now - new Date(iso).getTime()) / 1000);
       if (secs < 60) return `${secs}s ago`;
@@ -15489,24 +15500,26 @@
 
         {/* Summary stat cards */}
         <div className="stats-grid" style={{gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',marginBottom:10}}>
-          <StatCard color="indigo" icon="👁" label="Views" value={sumLoading?'…':(summary?.views??0).toLocaleString()} sub={period.label}/>
-          <StatCard color="yellow" icon="🛒" label="Add to Cart" value={sumLoading?'…':(summary?.atc??0).toLocaleString()} sub={period.label}/>
-          <StatCard color="cyan" icon="💳" label="Checkout" value={sumLoading?'…':(summary?.checkout??0).toLocaleString()} sub={period.label}/>
-          <StatCard color="green" icon="✅" label="Purchases" value={sumLoading?'…':(summary?.purchases??0).toLocaleString()} sub={summary?.purchaseValue?`₹${summary.purchaseValue.toLocaleString()}`:period.label}/>
+          <StatCard color="indigo" icon="👁" label="Views" value={sumLoading?'…':(summary?.views??0).toLocaleString()} sub={<>{period.label}{' '}<DeltaBadge pct={summary?.change?.views}/></>}/>
+          <StatCard color="yellow" icon="🛒" label="Add to Cart" value={sumLoading?'…':(summary?.atc??0).toLocaleString()} sub={<>{period.label}{' '}<DeltaBadge pct={summary?.change?.atc}/></>}/>
+          <StatCard color="cyan" icon="💳" label="Checkout" value={sumLoading?'…':(summary?.checkout??0).toLocaleString()} sub={<>{period.label}{' '}<DeltaBadge pct={summary?.change?.checkout}/></>}/>
+          <StatCard color="green" icon="✅" label="Purchases" value={sumLoading?'…':(summary?.purchases??0).toLocaleString()} sub={<>{summary?.purchaseValue?`₹${summary.purchaseValue.toLocaleString()}`:period.label}{' '}<DeltaBadge pct={summary?.change?.purchases}/></>}/>
         </div>
 
         {/* Funnel conversion rates */}
         {!sumLoading && summary && (
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:10,marginBottom:24}}>
             {[
-              { label:'View → ATC', val:summary.viewToAtcRate, color:'#f59e0b' },
-              { label:'ATC → Checkout', val:summary.atcToCheckoutRate, color:'#22d3ee' },
-              { label:'Checkout → Purchase', val:summary.checkoutToPurchaseRate, color:'#10b981' },
-              { label:'View → Purchase (overall)', val:summary.viewToPurchaseRate, color:'#a855f7' },
+              { key:'viewToAtcRate', label:'View → ATC', val:summary.viewToAtcRate, color:'#f59e0b' },
+              { key:'atcToCheckoutRate', label:'ATC → Checkout', val:summary.atcToCheckoutRate, color:'#22d3ee' },
+              { key:'viewToCheckoutRate', label:'View → Checkout', val:summary.viewToCheckoutRate, color:'#60a5fa' },
+              { key:'checkoutToPurchaseRate', label:'Checkout → Purchase', val:summary.checkoutToPurchaseRate, color:'#10b981' },
+              { key:'viewToPurchaseRate', label:'View → Purchase (overall)', val:summary.viewToPurchaseRate, color:'#a855f7' },
             ].map(r => (
               <div key={r.label} style={{background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 14px'}}>
                 <div style={{fontSize:10,color:'var(--text-muted)',fontWeight:700,letterSpacing:0.5,textTransform:'uppercase',marginBottom:4}}>{r.label}</div>
                 <div style={{fontSize:22,fontWeight:800,color:r.color}}>{r.val.toFixed(1)}%</div>
+                <div style={{fontSize:10.5,marginTop:2}}><DeltaBadge pct={summary?.change?.[r.key]}/></div>
               </div>
             ))}
           </div>
