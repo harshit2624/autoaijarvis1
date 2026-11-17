@@ -17133,19 +17133,25 @@ app.get("/track/rr-fee", async (req, res) => {
 // POST /track/razorpay-order — create Razorpay order for RR fee
 app.post("/track/razorpay-order", async (req, res) => {
   try {
-    const { vendor_name, order_name, customer_name } = req.body || {};
+    const { vendor_name, order_name, customer_name, items } = req.body || {};
     if (!process.env.RAZORPAY_KEY_ID) return res.status(400).json({ error: "Razorpay not configured." });
     const cfg = vendor_name
       ? await mdb.collection('vendor_return_config').findOne({ vendor_name }, { projection: { rr_fee: 1, _id: 0 } })
       : null;
     const fee = cfg?.rr_fee ?? 199;
+    // Style-swap exchange — a pricier replacement adds the real (server-
+    // verified) difference on top of the flat fee; a cheaper one never
+    // reduces this charge, it becomes store credit after the exchange is
+    // processed instead (see computeSwapPriceDiffs / the admin credit flow).
+    const { total: priceDiffTotal, owedByCustomer } = await computeSwapPriceDiffs(items);
+    const amount = +(fee + owedByCustomer).toFixed(2);
     const order = await getRzp().orders.create({
-      amount: fee * 100, // paise
+      amount: Math.round(amount * 100), // paise
       currency: 'INR',
       receipt: `rr_${order_name}_${Date.now()}`.slice(0, 40),
-      notes: { order_name: order_name || '', vendor: vendor_name || '', customer: customer_name || '' },
+      notes: { order_name: order_name || '', vendor: vendor_name || '', customer: customer_name || '', fee, price_diff_total: priceDiffTotal },
     });
-    res.json({ order_id: order.id, amount: fee, key: process.env.RAZORPAY_KEY_ID });
+    res.json({ order_id: order.id, amount, fee, price_diff_total: priceDiffTotal, key: process.env.RAZORPAY_KEY_ID });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -23525,6 +23531,69 @@ app.get("/order/product-variants", async (req, res) => {
   }
 });
 
+// GET /order/swap-products — other active products from the SAME vendor,
+// for the "style swap" exchange flow (exchange into a different product
+// entirely, not just a different size of the same one). Excludes the
+// product being exchanged away. Price shown is each product's lowest
+// variant price, for display only — the actual price used for the fee/
+// credit math is re-fetched server-side once a specific variant is chosen
+// (see getVariantRealPrice), never trusted from the client.
+app.get("/order/swap-products", async (req, res) => {
+  try {
+    const { vendor, exclude_product_id } = req.query;
+    if (!vendor) return res.status(400).json({ error: "vendor required" });
+    const data = await shopifyREST(`/products.json?vendor=${encodeURIComponent(vendor)}&status=active&limit=100&fields=id,title,handle,images,variants`);
+    const products = (data.products || [])
+      .filter(p => String(p.id) !== String(exclude_product_id))
+      .map(p => {
+        const prices = (p.variants || []).map(v => parseFloat(v.price || 0)).filter(n => n > 0);
+        const inStock = (p.variants || []).some(v => v.inventory_quantity > 0 || v.inventory_management === null || v.inventory_policy === 'continue');
+        return {
+          id: p.id,
+          title: p.title,
+          handle: p.handle,
+          image_url: p.images?.[0]?.src || null,
+          price: prices.length ? Math.min(...prices) : 0,
+          in_stock: inStock,
+        };
+      })
+      .filter(p => p.in_stock);
+    res.json({ products });
+  } catch(e) {
+    console.error('❌ /order/swap-products:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Trusted lookup of a variant's real, current price — used for the swap-
+// exchange fee/credit math so a tampered client-side price can never
+// change what gets charged or credited.
+async function getVariantRealPrice(productId, variantId) {
+  const data = await shopifyREST(`/products/${productId}.json?fields=id,variants`);
+  const variant = (data.product?.variants || []).find(v => String(v.id) === String(variantId));
+  if (!variant) throw new Error('Swap variant not found.');
+  return parseFloat(variant.price || 0);
+}
+
+// Recomputes each exchange item's real price difference (swap variant's
+// true price vs. the original item's price) server-side, and the total
+// extra amount owed (never negative — a cheaper swap never reduces the
+// Razorpay charge, it only turns into store credit after the exchange is
+// processed, per '/admin/return-requests/:id/store-credit').
+async function computeSwapPriceDiffs(items) {
+  let total = 0;
+  const diffs = [];
+  for (const it of items || []) {
+    if (!it.swap_product_id || !it.swap_variant_id) { diffs.push(0); continue; }
+    const realPrice = await getVariantRealPrice(it.swap_product_id, it.swap_variant_id);
+    const originalPrice = parseFloat(it.price || 0) * (it.quantity || 1);
+    const diff = +(realPrice - originalPrice).toFixed(2);
+    diffs.push(diff);
+    total += diff;
+  }
+  return { diffs, total: +total.toFixed(2), owedByCustomer: Math.max(0, +total.toFixed(2)) };
+}
+
 // GET /order/lookup-by-contact — find orders by email or phone (no order number needed)
 app.get("/order/lookup-by-contact", async (req, res) => {
   try {
@@ -24316,6 +24385,13 @@ app.post("/track/request", async (req, res) => {
     const now = new Date();
     const cleanImageUrls = Array.isArray(image_urls) ? image_urls.filter(u => typeof u === 'string' && (u.startsWith('/rr-uploads/') || u.startsWith('/uploads/'))) : [];
 
+    // Style-swap exchanges: re-verify each item's price difference against
+    // Shopify directly (never trust whatever the client computed/sent) and
+    // attach it to the item so the admin/vendor detail view and the later
+    // store-credit flow both have a real number to work from.
+    const { diffs: swapDiffs } = await computeSwapPriceDiffs(items);
+    items.forEach((it, i) => { if (swapDiffs[i]) it.price_diff = swapDiffs[i]; });
+
     // Items may span more than one vendor (e.g. an exchange touching 3
     // products from 3 different sellers) — a single return_requests doc
     // can't straddle vendors (vendor_name is a single string field, and
@@ -24337,6 +24413,7 @@ app.post("/track/request", async (req, res) => {
       const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
       const rand = String(Math.floor(Math.random() * 9000) + 1000);
       const request_id = groups.length > 1 ? `RR-${datePart}-${rand}-${i}` : `RR-${datePart}-${rand}`;
+      const priceDiffTotal = +vendorItems.reduce((s, it) => s + (it.price_diff || 0), 0).toFixed(2);
 
       const doc = {
         request_id,
@@ -24357,6 +24434,11 @@ app.post("/track/request", async (req, res) => {
         razorpay_order_id: razorpay_order_id || null,
         fee_paid: payment_id ? true : (isFeeWaived ? 'waived' : false),
         image_urls: cleanImageUrls,
+        // Swap-exchange price math — positive means the customer paid the
+        // difference on top of the fee already (see /track/razorpay-order);
+        // negative means they're owed that amount as store credit once this
+        // is resolved (admin's existing store-credit flow, not automatic).
+        ...(priceDiffTotal !== 0 && { price_diff_total: priceDiffTotal, price_diff_resolution: priceDiffTotal > 0 ? 'paid_by_customer' : 'owed_to_customer' }),
         ...(isFeeWaived && { fee_waived_by_admin: true }),
         ...(isForceEnabled && { force_enabled_by_admin: true }),
         history: [{ status: 'pending', at: now.toISOString(), note: 'Request submitted by customer', source: 'customer' }],
@@ -25159,6 +25241,14 @@ app.delete("/admin/return-requests/:id", adminAuth, async (req, res) => {
 // list price over-credits. Confirmed live on #3258: paid ₹1411.70, but the
 // two returned lines listed at ₹2972 and a ₹2972 code went out.
 function computeRRCreditAmounts(rr, order) {
+  // Style-swap exchange where the replacement was cheaper — the customer
+  // is only owed the difference, not the full item value the rest of this
+  // function would otherwise compute (that calc is for a plain return's
+  // refund, a completely different amount for a swap).
+  if (rr.price_diff_resolution === 'owed_to_customer' && rr.price_diff_total < 0) {
+    const amt = Math.abs(rr.price_diff_total);
+    return { grossAmount: amt, netAmount: amt, discountDetected: false, paidRatio: 1, defaultAmount: amt };
+  }
   const olis = order.line_items || [];
   let grossAmount = 0, netAmount = 0, matchedAny = false;
   (rr.items || []).forEach(it => {

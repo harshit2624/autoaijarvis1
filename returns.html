@@ -301,6 +301,29 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
   font-size:11px;font-weight:700;color:var(--green)}
 .variant-error{font-size:11px;color:var(--red);margin-top:6px}
 
+/* Style-swap — exchange into a different product entirely */
+.swap-toggle-link{display:inline-flex;align-items:center;gap:5px;margin-top:10px;font-size:11.5px;font-weight:700;color:var(--blue);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.swap-toggle-link:active{opacity:.7}
+.swap-picker{margin-top:10px}
+.swap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;max-height:280px;overflow-y:auto;padding:2px}
+.swap-card{border:1.5px solid var(--border);border-radius:10px;padding:8px;cursor:pointer;background:var(--bg);text-align:center;-webkit-tap-highlight-color:transparent;transition:border-color .12s}
+.swap-card:active{opacity:.75}
+.swap-card.selected{border-color:var(--text);background:var(--card)}
+.swap-card img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:7px;margin-bottom:6px;background:var(--border)}
+.swap-card-title{font-size:10.5px;font-weight:600;color:var(--text);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.swap-card-price{font-size:10.5px;font-weight:700;color:var(--muted);margin-top:3px}
+.swap-back-link{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--muted);cursor:pointer;margin-bottom:10px}
+.swap-summary-row{display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px;border-radius:10px;background:var(--green-light);border:1px solid var(--green-border)}
+.swap-summary-row img{width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;background:var(--border)}
+.swap-summary-info{flex:1;min-width:0}
+.swap-summary-title{font-size:12px;font-weight:700;color:var(--text);line-height:1.3}
+.swap-summary-meta{font-size:10.5px;color:var(--muted);margin-top:2px}
+.swap-summary-diff{font-size:12px;font-weight:800;white-space:nowrap}
+.swap-summary-diff.pay{color:var(--red)}
+.swap-summary-diff.credit{color:var(--green)}
+.swap-summary-diff.even{color:var(--muted)}
+.swap-summary-remove{font-size:10px;font-weight:700;color:var(--muted);cursor:pointer;text-decoration:underline;flex-shrink:0}
+
 /* Reason selector */
 .reason-list{display:flex;flex-direction:column;gap:6px}
 .reason-row{
@@ -1220,6 +1243,13 @@ function buildItemsStep() {
         <div class="mini-spin"></div> Loading options…
       </div>
       <div id="variant-options-${idx}" class="hidden"></div>
+      <div id="swap-area-${idx}">
+        <div class="swap-toggle-link" id="swap-toggle-${idx}" onclick="event.stopPropagation(); openSwapPicker(${idx})">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          Or swap for a different product
+        </div>
+        <div class="swap-picker hidden" id="swap-picker-${idx}"></div>
+      </div>
     </div>` : ''}
     ${!blocked && it.quantity > 1 ? `<div class="qty-row hidden" id="qty-row-${idx}">
       <span class="qty-label">Qty to ${flowType}:</span>
@@ -1245,6 +1275,9 @@ function toggleItem(idx) {
     row.classList.remove('selected');
     document.getElementById(`qty-row-${idx}`)?.classList.add('hidden');
     document.getElementById(`variant-picker-${idx}`)?.classList.add('hidden');
+    document.getElementById(`swap-toggle-${idx}`)?.classList.remove('hidden');
+    const swapPickerEl = document.getElementById(`swap-picker-${idx}`);
+    if (swapPickerEl) { swapPickerEl.classList.add('hidden'); swapPickerEl.innerHTML = ''; }
   } else {
     const it = orderData.items[idx];
     selectedItems[idx] = { qty: 1, exchange_for: '', exchange_variant_id: null };
@@ -1433,6 +1466,169 @@ function setExchangeFor(idx, label, variantId) {
   updateItemsBtn();
 }
 
+// ── Style swap — exchange into a different product (same vendor) ──────
+const swapProductsCache = {}; // vendor -> products[]
+const swapVariantCache = {};  // product_id -> variant data
+
+async function openSwapPicker(idx) {
+  const it = orderData.items[idx];
+  const pickerEl = document.getElementById(`swap-picker-${idx}`);
+  const toggleEl = document.getElementById(`swap-toggle-${idx}`);
+  toggleEl.classList.add('hidden');
+  pickerEl.classList.remove('hidden');
+  pickerEl.innerHTML = `<div class="variant-loading"><div class="mini-spin"></div> Loading other products…</div>`;
+  try {
+    const vendor = it.vendor || '';
+    if (!swapProductsCache[vendor]) {
+      const r = await fetch(`${API}/order/swap-products?vendor=${encodeURIComponent(vendor)}&exclude_product_id=${it.product_id || ''}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      swapProductsCache[vendor] = d.products || [];
+    }
+    renderSwapGrid(idx, swapProductsCache[vendor]);
+  } catch(e) {
+    pickerEl.innerHTML = `<div class="variant-error">Could not load other products. ${esc(e.message)}</div>`;
+  }
+}
+
+function renderSwapGrid(idx, products) {
+  const pickerEl = document.getElementById(`swap-picker-${idx}`);
+  if (!products.length) {
+    pickerEl.innerHTML = `<div class="variant-note">No other products available from this brand right now.</div>`;
+    return;
+  }
+  pickerEl.innerHTML = `
+    <div class="swap-back-link" onclick="closeSwapPicker(${idx})">‹ Cancel swap</div>
+    <div class="swap-grid">
+      ${products.map(p => `
+        <div class="swap-card" onclick="pickSwapProduct(${idx},'${p.id}')">
+          ${p.image_url ? `<img src="${esc(p.image_url)}" alt="">` : `<div style="width:100%;aspect-ratio:1;border-radius:7px;background:var(--border);margin-bottom:6px"></div>`}
+          <div class="swap-card-title">${esc(p.title)}</div>
+          <div class="swap-card-price">₹${fmt(p.price)}</div>
+        </div>
+      `).join('')}
+    </div>`;
+  window.__swapProductsByIdx = window.__swapProductsByIdx || {};
+  window.__swapProductsByIdx[idx] = Object.fromEntries(products.map(p => [String(p.id), p]));
+}
+
+function closeSwapPicker(idx) {
+  document.getElementById(`swap-toggle-${idx}`).classList.remove('hidden');
+  document.getElementById(`swap-picker-${idx}`).classList.add('hidden');
+  document.getElementById(`swap-picker-${idx}`).innerHTML = '';
+}
+
+async function pickSwapProduct(idx, productId) {
+  const product = window.__swapProductsByIdx?.[idx]?.[String(productId)];
+  const pickerEl = document.getElementById(`swap-picker-${idx}`);
+  pickerEl.innerHTML = `<div class="swap-back-link" onclick="openSwapPicker(${idx})">‹ Back to products</div><div class="variant-loading"><div class="mini-spin"></div> Loading sizes…</div>`;
+  try {
+    if (!swapVariantCache[productId]) {
+      const r = await fetch(`${API}/order/product-variants?product_id=${productId}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      swapVariantCache[productId] = d;
+    }
+    renderSwapVariantPicker(idx, product, swapVariantCache[productId]);
+  } catch(e) {
+    pickerEl.innerHTML = `<div class="variant-error">Could not load sizes. ${esc(e.message)}</div>`;
+  }
+}
+
+function renderSwapVariantPicker(idx, product, data) {
+  const pickerEl = document.getElementById(`swap-picker-${idx}`);
+  const { options, variants } = data;
+  const availableVariants = variants.filter(v => v.available);
+  const chipsHtml = options.map((opt, oi) => {
+    const chips = [...new Set(availableVariants.map(v => [v.option1,v.option2,v.option3][oi]))].filter(Boolean).map(val => `
+      <div class="opt-chip" onclick="pickSwapVariant(${idx}, ${oi}, ${JSON.stringify(val)})">${esc(val)}</div>
+    `).join('');
+    return `<div class="option-group"><div class="option-label">${esc(opt.name)}</div><div class="option-chips" id="swap-chips-${idx}-${oi}">${chips}</div></div>`;
+  }).join('');
+  pickerEl.innerHTML = `
+    <div class="swap-back-link" onclick="openSwapPicker(${idx})">‹ Back to products</div>
+    <div class="variant-note" style="margin-bottom:8px">${esc(product.title)} — ₹${fmt(product.price)}</div>
+    ${options.length ? chipsHtml : ''}
+    <div id="swap-confirm-${idx}"></div>
+  `;
+  if (!options.length && availableVariants.length === 1) {
+    confirmSwapSelection(idx, product, availableVariants[0]);
+  }
+  swapVariantSel[idx] = Array(options.length).fill(null);
+  swapVariantData[idx] = { product, variants: availableVariants, options };
+}
+
+const swapVariantSel = {};
+const swapVariantData = {};
+
+function pickSwapVariant(idx, optionIdx, val) {
+  if (!swapVariantSel[idx]) swapVariantSel[idx] = [];
+  swapVariantSel[idx][optionIdx] = val;
+  const { variants, options, product } = swapVariantData[idx];
+  // Highlight selected chip in this option's row
+  const row = document.getElementById(`swap-chips-${idx}-${optionIdx}`);
+  if (row) [...row.children].forEach(c => c.classList.toggle('selected', c.textContent.trim() === val));
+  const sel = swapVariantSel[idx];
+  if (sel.every(s => s !== null)) {
+    const matched = variants.find(v => options.every((_, i) => [v.option1,v.option2,v.option3][i] === sel[i]));
+    if (matched) confirmSwapSelection(idx, product, matched);
+  }
+}
+
+function confirmSwapSelection(idx, product, variant) {
+  const el = document.getElementById(`swap-confirm-${idx}`);
+  if (el) el.innerHTML = `<div class="variant-selected-pill"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> ${esc(variant.title==='Default Title'?product.title:variant.title)} selected</div>`;
+
+  const it = orderData.items[idx];
+  const originalTotal = parseFloat(it.price) * (selectedItems[idx]?.qty || 1);
+  const swapPrice = parseFloat(variant.price);
+  const diff = +(swapPrice - originalTotal).toFixed(2);
+
+  const sel = selectedItems[idx];
+  sel.swap_product_id = product.id;
+  sel.swap_product_title = product.title;
+  sel.swap_variant_id = variant.id;
+  sel.swap_variant_title = variant.title === 'Default Title' ? '' : variant.title;
+  sel.swap_image_url = product.image_url || null;
+  sel.swap_price = swapPrice;
+  sel.price_diff = diff; // display-only — server re-verifies before charging/storing
+  const label = `Swap → ${product.title}${sel.swap_variant_title ? ' · '+sel.swap_variant_title : ''}`;
+  setExchangeFor(idx, label, null);
+  renderSwapSummaryRow(idx);
+}
+
+function renderSwapSummaryRow(idx) {
+  const sel = selectedItems[idx];
+  if (!sel?.swap_product_id) return;
+  const pickerEl = document.getElementById(`swap-picker-${idx}`);
+  const diff = sel.price_diff || 0;
+  const diffCls = diff > 0.5 ? 'pay' : diff < -0.5 ? 'credit' : 'even';
+  const diffLabel = diff > 0.5 ? `+₹${fmt(diff)} to pay` : diff < -0.5 ? `₹${fmt(Math.abs(diff))} store credit` : 'No difference';
+  const existing = pickerEl.querySelector('.swap-summary-row');
+  if (existing) existing.remove();
+  pickerEl.insertAdjacentHTML('beforeend', `
+    <div class="swap-summary-row">
+      ${sel.swap_image_url ? `<img src="${esc(sel.swap_image_url)}" alt="">` : ''}
+      <div class="swap-summary-info">
+        <div class="swap-summary-title">${esc(sel.swap_product_title)}${sel.swap_variant_title ? ' · '+esc(sel.swap_variant_title) : ''}</div>
+        <div class="swap-summary-meta">New price ₹${fmt(sel.swap_price)}</div>
+      </div>
+      <div class="swap-summary-diff ${diffCls}">${diffLabel}</div>
+      <span class="swap-summary-remove" onclick="event.stopPropagation(); removeSwap(${idx})">Undo</span>
+    </div>`);
+}
+
+function removeSwap(idx) {
+  const sel = selectedItems[idx];
+  if (!sel) return;
+  delete sel.swap_product_id; delete sel.swap_product_title; delete sel.swap_variant_id;
+  delete sel.swap_variant_title; delete sel.swap_image_url; delete sel.swap_price; delete sel.price_diff;
+  setExchangeFor(idx, '', null);
+  closeSwapPicker(idx);
+  document.getElementById(`variant-picker-${idx}`)?.classList.remove('hidden');
+  loadVariantPicker(idx, orderData.items[idx]);
+}
+
 function changeQty(idx, delta, e) {
   e.stopPropagation();
   if (!selectedItems[idx]) return;
@@ -1565,31 +1761,46 @@ function buildReviewStep() {
     </div>`;
   }).join('');
 
-  const needsFee = rrFee > 0 && !adminCodeType;
+  // Swap price difference — real amount server-verifies before charging,
+  // this is just the display preview. Always collected regardless of any
+  // fee-waiver code (that waives the processing fee, not what the
+  // replacement item itself actually costs).
+  const priceDiffTotal = +selEntries.reduce((s,[,sel]) => s + (sel.price_diff || 0), 0).toFixed(2);
+  const owedByCustomer = Math.max(0, priceDiffTotal);
+  const creditOwed = Math.max(0, -priceDiffTotal);
+
+  const needsFee = (rrFee > 0 && !adminCodeType) || owedByCustomer > 0;
   const feeLabel = adminCodeType === 'fee_waiver' ? 'Waived' : adminCodeType === 'force_enable' ? 'Admin override' : `₹${rrFee}`;
   const feeCls = adminCodeType ? 'green' : 'blue';
+  const payNow = (rrFee > 0 && !adminCodeType ? rrFee : 0) + owedByCustomer;
 
   document.getElementById('review-card').innerHTML = `
     <div class="review-row"><span class="review-label">Order</span><span class="review-val">${esc(orderData?.order_name || '')}</span></div>
     <div class="review-row"><span class="review-label">Type</span><span class="review-val">${flowType === 'return' ? 'Return (Refund)' : 'Exchange'}</span></div>
     ${itemRows}
     <div class="review-row"><span class="review-label">Reason</span><span class="review-val">${esc(selectedReason)}</span></div>
-    <div class="review-row" style="border-bottom:none"><span class="review-label">Processing fee</span><span class="review-val ${feeCls}">${feeLabel}</span></div>
+    <div class="review-row"><span class="review-label">Processing fee</span><span class="review-val ${feeCls}">${feeLabel}</span></div>
+    ${owedByCustomer > 0 ? `<div class="review-row"><span class="review-label">Price difference</span><span class="review-val" style="color:var(--red)">+₹${fmt(owedByCustomer)}</span></div>` : ''}
+    ${creditOwed > 0 ? `<div class="review-row" style="border-bottom:none"><span class="review-label">Store credit after swap</span><span class="review-val" style="color:var(--green)">₹${fmt(creditOwed)}</span></div>` : ''}
   `;
 
   const feeSection = document.getElementById('fee-section');
   if (needsFee) {
+    const feeNote = rrFee > 0 && !adminCodeType
+      ? `A <strong>₹${rrFee} processing fee</strong> covers return pickup &amp; restocking.`
+      : '';
+    const diffNote = owedByCustomer > 0 ? ` Your swap item costs <strong>₹${fmt(owedByCustomer)} more</strong> — that's added to this payment.` : '';
+    const creditNote = creditOwed > 0 ? ` Your swap item costs <strong>₹${fmt(creditOwed)} less</strong> — that'll come back to you as store credit once the exchange is processed.` : '';
     feeSection.innerHTML = `<div class="fee-box">
-      A <strong>₹${rrFee} processing fee</strong> covers return pickup &amp; restocking.
-      It's collected via Razorpay before we process your request.
+      ${feeNote}${diffNote}${creditNote} It's collected via Razorpay before we process your request.
     </div>`;
     document.getElementById('submit-btn').innerHTML = `
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-      Pay ₹${rrFee} &amp; Submit`;
+      Pay ₹${fmt(payNow)} &amp; Submit`;
   } else {
     feeSection.innerHTML = `<div class="fee-free-box">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-      No fee required for this request
+      ${creditOwed > 0 ? `No fee required — ₹${fmt(creditOwed)} store credit will follow once processed` : 'No fee required for this request'}
     </div>`;
     document.getElementById('submit-btn').innerHTML = `
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -1597,10 +1808,24 @@ function buildReviewStep() {
   }
 }
 
+// Items array shape both /track/razorpay-order and /track/request need to
+// independently re-verify a swap's real price — the server never trusts
+// selectedItems.price_diff, only product_id/variant_id + the original price.
+function buildSwapItemsPayload() {
+  return Object.entries(selectedItems).map(([idx, sel]) => {
+    const it = orderData.items[idx];
+    return {
+      price: it.price, quantity: sel.qty,
+      ...(sel.swap_product_id ? { swap_product_id: sel.swap_product_id, swap_variant_id: sel.swap_variant_id } : {}),
+    };
+  });
+}
+
 // ── Submit ────────────────────────────────────────────────────
 async function handleSubmit() {
   if (submitting) return;
-  const needsFee = rrFee > 0 && !adminCodeType;
+  const priceDiffTotal = Object.values(selectedItems).reduce((s,sel) => s + (sel.price_diff || 0), 0);
+  const needsFee = (rrFee > 0 && !adminCodeType) || priceDiffTotal > 0;
   if (needsFee) { await payAndSubmit(); }
   else { await submitRequest(null, null); }
 }
@@ -1613,7 +1838,7 @@ async function payAndSubmit() {
     const vendorName = orderData?.vendor_shipments?.[0]?.vendor_name || '';
     const r = await fetch(`${API}/track/razorpay-order`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ vendor_name: vendorName, order_name: orderData?.order_name, customer_name: orderData?.customer_name })
+      body: JSON.stringify({ vendor_name: vendorName, order_name: orderData?.order_name, customer_name: orderData?.customer_name, items: buildSwapItemsPayload() })
     });
     const rz = await r.json();
     if (!r.ok) throw new Error(rz.error || 'Payment error');
@@ -1648,7 +1873,12 @@ async function submitRequest(paymentId, rzOrderId) {
       title: it.title, variant_title: it.variant_title || '', quantity: sel.qty,
       sku: it.sku || '', price: it.price, image_url: it.image_url || null,
       vendor: it.vendor || '',
-      ...(flowType === 'exchange' && sel.exchange_for ? { exchange_for: sel.exchange_for, exchange_size_label: sel.exchange_for, exchange_variant_id: sel.exchange_variant_id || null } : {})
+      ...(flowType === 'exchange' && sel.exchange_for ? { exchange_for: sel.exchange_for, exchange_size_label: sel.exchange_for, exchange_variant_id: sel.exchange_variant_id || null } : {}),
+      ...(sel.swap_product_id ? {
+        swap_product_id: sel.swap_product_id, swap_product_title: sel.swap_product_title,
+        swap_variant_id: sel.swap_variant_id, swap_variant_title: sel.swap_variant_title || '',
+        swap_image_url: sel.swap_image_url || null, swap_price: sel.swap_price,
+      } : {})
     };
   });
   const note = document.getElementById('reason-note')?.value?.trim() || '';
