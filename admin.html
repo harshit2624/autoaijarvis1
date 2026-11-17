@@ -7087,43 +7087,38 @@
 
     const TYPE_COLOR = { return:'var(--cyan)', exchange:'var(--green)' };
     const STATUS_COLOR = { pending:'#f59e0b', approved:'#22c55e', pickup_scheduled:'#eab308', pickup:'#eab308', picked_up:'#3b82f6', in_transit:'#6366f1', received:'#06b6d4', received_at_warehouse:'#06b6d4', completed:'#10b981', rejected:'#ef4444', cancelled:'#6b7280' };
-    const TABS = ['all','pending','approved','rejected','completed'];
-    // Two extra tabs that aren't a single status — "approved" covers both
-    // "picked up, nothing left to do" and "still waiting on the courier",
-    // and exchanges need a second, separate leg (the replacement item
-    // shipped back out) that status alone doesn't distinguish either.
-    // Predicates mirror the backend's own 48h-reminder queries so "pending"
-    // here means the exact same thing it does in those alerts.
-    const EXTRA_TABS = {
-      pending_pickup: rq => rq.status==='approved' && !rq.received_at_cc && !rq.reverse_delivered_at,
-      pending_forward: rq => rq.type==='exchange' && !rq.forward_shipment &&
-        (rq.received_at_cc || rq.reverse_delivered_at) &&
-        !['completed','rejected','cancelled'].includes(rq.status),
-      // Actively moving with the courier — past "approved" (which now mostly
-      // just means "not yet picked up" via pending_pickup above) but short of
-      // landing back here. The old flat TABS had no way to see these at all
-      // except by scrolling "all".
-      in_progress: rq => ['pickup_scheduled','pickup','picked_up','in_transit','received','received_at_warehouse'].includes(rq.status),
-      // Return (not exchange) physically back with us, but no refund/store
-      // credit has gone out yet — resolution is only ever set when the
-      // refund/credit actually gets issued, so its absence here is exactly
-      // "received, nothing paid out yet."
-      refund_pending: rq => rq.type==='return' && ['received','received_at_warehouse'].includes(rq.status) && !rq.resolution,
-      // Same rule the "Received — Needs Review" stat always used, just made
-      // clickable/filterable like every other bucket now instead of being a
-      // number you could look at but not tap through to.
-      needs_review: rrNeedsReview,
-    };
     // Tinted background (not just a colored border) so status pills actually
     // read as different colors at a glance instead of all looking like the
     // same neutral outline.
     const pillStyle = c => ({ borderColor:c, color:c, background:`color-mix(in srgb, ${c} 14%, transparent)` });
 
-    const tabCounts = Object.fromEntries(TABS.map(t => [t, t==='all' ? requests.length : requests.filter(rq=>rq.status===t).length]));
-    const extraTabCounts = Object.fromEntries(Object.entries(EXTRA_TABS).map(([k,fn]) => [k, requests.filter(fn).length]));
+    // One pill per lifecycle stage, mutually exclusive, same visual language
+    // as the Orders page's own stage pills — so the team reads this page
+    // the same way they already read that one. QC Pending / Refund Pending /
+    // Ship Replacement split what the old "Needs Review" bucket blurred
+    // together: QC Pending is the window between the courier marking it
+    // arrived and someone actually checking the item into CC inventory
+    // (received_at_cc) — real unreviewed stock that had no pill of its own
+    // before. Once checked in, a return owes a refund and an exchange owes
+    // a replacement shipment — two different actions for two different
+    // people, so they get two separate pills rather than one blended one.
+    const IN_TRANSIT_STATUSES = ['approved','pickup_scheduled','pickup','picked_up','in_transit'];
+    const RR_PILLS = [
+      { key:'all',              label:'All',               icon:'📋', pred: () => true },
+      { key:'pending',          label:'New',                icon:'🆕', pred: rq => rq.status==='pending' },
+      { key:'return_pending',   label:'Return Pending',     icon:'↩',  pred: rq => rq.type==='return'   && IN_TRANSIT_STATUSES.includes(rq.status) },
+      { key:'exchange_pending', label:'Exchange Pending',   icon:'⇄',  pred: rq => rq.type==='exchange' && IN_TRANSIT_STATUSES.includes(rq.status) },
+      { key:'qc_pending',       label:'QC Pending',         icon:'🔍', pred: rq => ['received','received_at_warehouse'].includes(rq.status) && !rq.received_at_cc },
+      { key:'refund_pending',   label:'Refund Pending',     icon:'💸', pred: rq => rq.type==='return'   && !!rq.received_at_cc && rq.resolution!=='store_credit' && !['completed','rejected','cancelled'].includes(rq.status) },
+      { key:'ship_pending',     label:'Ship Replacement',   icon:'🔁', pred: rq => rq.type==='exchange' && !rq.forward_shipment && (rq.received_at_cc||rq.reverse_delivered_at) && !['completed','rejected','cancelled'].includes(rq.status) },
+      { key:'completed',        label:'Completed',          icon:'✅', pred: rq => rq.status==='completed' },
+      { key:'rejected',         label:'Rejected/Cancelled', icon:'🚫', pred: rq => ['rejected','cancelled'].includes(rq.status) },
+    ];
+    const pillCounts = Object.fromEntries(RR_PILLS.map(p => [p.key, requests.filter(p.pred).length]));
+    const activePill  = RR_PILLS.find(p => p.key === tab) || RR_PILLS[0];
 
     const filtered = requests
-      .filter(rq => tab==='all' ? true : EXTRA_TABS[tab] ? EXTRA_TABS[tab](rq) : rq.status===tab)
+      .filter(activePill.pred)
       .filter(rq => typeFilter==='all' || rq.type===typeFilter)
       .filter(rq => vendorFilter==='all' || rq.vendor_name===vendorFilter)
       .filter(rq => !search.trim() || [rq.order_name,rq.customer_name,rq.customer_email,rq.request_id,rq.vendor_name].join(' ').toLowerCase().includes(search.trim().toLowerCase()));
@@ -7136,62 +7131,23 @@
     const pickupOverdue = requests.some(rrIsPickupOverdue);
     const reviewStale = requests.filter(rrNeedsReview).some(rq=>rrReceivedHoursSince(rq)>=20);
 
-    // One dashboard, in the order you'd actually work through a day: new
-    // requests to decide on, then pickup, then courier transit, then the
-    // things that land back in your hands and need a call (review/refund/
-    // replacement). Each card both shows the count AND is the filter button
-    // — no more separate "stats row" and "tabs row" saying overlapping
-    // things in two different places.
-    const ACTION_CARDS = [
-      { key:'pending', icon:'🆕', label:'New Requests', hint:'Approve or reject', count: requests.filter(rq=>rq.status==='pending').length, color:'#f59e0b' },
-      { key:'pending_pickup', icon:'📦', label:'Pending Pickup', hint:'Schedule courier pickup', count: extraTabCounts.pending_pickup, color:'#eab308', urgent: pickupOverdue },
-      { key:'in_progress', icon:'🚚', label:'In Progress', hint:'With courier — just watch', count: extraTabCounts.in_progress, color:'#6366f1' },
-      { key:'needs_review', icon:'🔍', label:'Needs Review', hint:'Received — decide what happens next', count: extraTabCounts.needs_review, color:'#06b6d4', urgent: reviewStale },
-      { key:'refund_pending', icon:'💸', label:'Refund Pending', hint:'Issue refund or store credit', count: extraTabCounts.refund_pending, color:'#ef4444' },
-      { key:'pending_forward', icon:'🔁', label:'Pending Forward', hint:'Ship the replacement item', count: extraTabCounts.pending_forward, color:'#22c55e' },
-    ];
-    // Reference-only, no action needed from these — kept as small text links
-    // rather than cards so they don't compete for attention.
-    const QUIET_LINKS = [
-      { key:'all', label:'All', count: requests.length },
-      { key:'approved', label:'Approved', count: tabCounts.approved },
-      { key:'completed', label:'Completed', count: tabCounts.completed },
-      { key:'rejected', label:'Rejected', count: tabCounts.rejected },
-    ];
-
     return (
       <div className="page rr-console">
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))',gap:10,marginBottom:14}}>
-          {ACTION_CARDS.map(c=>(
-            <button key={c.key} onClick={()=>setTab(c.key)} style={{
-              textAlign:'left',cursor:'pointer',borderRadius:10,padding:'14px 16px',
-              border: tab===c.key ? `1.5px solid ${c.color}` : '1px solid var(--border)',
-              background: tab===c.key ? `color-mix(in srgb, ${c.color} 10%, var(--bg-card))` : 'var(--bg-card)',
-              boxShadow: c.urgent ? `0 0 0 1px ${c.color}` : 'none',
-            }}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                <span style={{fontSize:20}}>{c.icon}</span>
-                <span style={{fontSize:22,fontWeight:800,color:c.color,fontVariantNumeric:'tabular-nums'}}>{c.count}</span>
-              </div>
-              <div style={{fontSize:12,fontWeight:700,color:'var(--text)',marginTop:6}}>{c.label}</div>
-              <div style={{fontSize:10.5,color:'var(--text-muted)',marginTop:2}}>{c.hint}</div>
-              {c.urgent && <div style={{fontSize:10,color:c.color,fontWeight:700,marginTop:4}}>⏰ needs attention</div>}
-            </button>
-          ))}
-        </div>
-
-        <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap',marginBottom:10,fontSize:11.5}}>
-          <span style={{color:'var(--text-muted)'}}>View:</span>
-          {QUIET_LINKS.map(q=>(
-            <button key={q.key} onClick={()=>setTab(q.key)} style={{
-              background:'none',border:'none',cursor:'pointer',fontFamily:'var(--font-family)',fontSize:11.5,padding:0,
-              color: tab===q.key ? 'var(--indigo)' : 'var(--text-muted)',
-              fontWeight: tab===q.key ? 700 : 400,
-              textDecoration: tab===q.key ? 'underline' : 'none',
-            }}>
-              {q.label} ({q.count})
-            </button>
-          ))}
+        {/* Stage pills — horizontal scroll, same look as the Orders page */}
+        <div style={{display:'flex',gap:5,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none',paddingBottom:2,marginBottom:12}}>
+          {RR_PILLS.map(p=>{
+            const urgent = (p.key==='return_pending'||p.key==='exchange_pending') ? pickupOverdue : p.key==='qc_pending' ? reviewStale : false;
+            return (
+              <button key={p.key} onClick={()=>setTab(p.key)} style={{
+                flexShrink:0,padding:'5px 11px',borderRadius:20,border: urgent && tab!==p.key ? '1px solid var(--red)' : 'none',cursor:'pointer',
+                fontSize:12,fontWeight:600,whiteSpace:'nowrap',fontFamily:'var(--font-family)',
+                background:tab===p.key?'var(--indigo)':'var(--bg-card2)',
+                color:tab===p.key?'#fff':urgent?'var(--red)':'var(--text-muted)',transition:'all 0.15s',
+              }}>
+                {p.icon} {p.label}{pillCounts[p.key]>0?` (${pillCounts[p.key]})`:''}
+              </button>
+            );
+          })}
         </div>
 
         <div className="rr-toolbar">
@@ -7233,59 +7189,63 @@
           <div style={{padding:40,textAlign:'center',color:'var(--text-muted)',fontSize:13,background:'var(--bg-card)',border:'1px solid var(--border)',borderRadius:10}}>No requests found.</div>
         ) : (
           <div className={`rr-board ${!selected?'rr-board-full':''}`}>
-            <div className="rr-list">
-              {!selected && (
-                <div style={{display:'flex',alignItems:'center',gap:8,padding:'2px 4px 8px',fontSize:11.5,color:'var(--text-muted)'}}>
-                  <input type="checkbox"
-                    checked={filtered.length>0 && filtered.every(rq=>checkedIds.has(rq.request_id))}
-                    onChange={e=>setCheckedIds(e.target.checked ? new Set(filtered.map(rq=>rq.request_id)) : new Set())}
-                  />
-                  <span>Select all {filtered.length} shown</span>
+            {!selected ? (
+              <div className="card">
+                <div className="tbl-wrap">
+                  <table>
+                    <thead><tr>
+                      <th style={{width:30,paddingLeft:8}}>
+                        <input type="checkbox"
+                          checked={filtered.length>0 && filtered.every(rq=>checkedIds.has(rq.request_id))}
+                          onChange={e=>setCheckedIds(e.target.checked ? new Set(filtered.map(rq=>rq.request_id)) : new Set())}
+                        />
+                      </th>
+                      <th>Request</th><th>Order</th><th>Customer</th><th>Vendor</th><th>Type</th><th>Items</th><th>Status</th><th>Created</th><th/>
+                    </tr></thead>
+                    <tbody>
+                      {filtered.map(rq=>{
+                        const needsReview = rrNeedsReview(rq);
+                        const hrs = rrReceivedHoursSince(rq);
+                        const overdueReview = needsReview && hrs!==null && hrs>=20;
+                        return (
+                          <tr key={rq.request_id} style={{cursor:'pointer'}} onClick={()=>setSelectedId(rq.request_id)}>
+                            <td onClick={e=>e.stopPropagation()} style={{paddingLeft:8}}>
+                              <input type="checkbox" checked={checkedIds.has(rq.request_id)} onChange={()=>toggleChecked(rq.request_id)}/>
+                            </td>
+                            <td className="mono" style={{fontSize:10.5,color:'var(--text-muted)'}}>{rq.request_id}</td>
+                            <td style={{fontWeight:700}}>{rq.order_name}</td>
+                            <td>{rq.customer_name||rq.customer_email}</td>
+                            <td style={{color:'var(--text-muted)'}}>{rq.vendor_name||'—'}</td>
+                            <td><span style={{color:TYPE_COLOR[rq.type],fontWeight:600}}>{rq.type==='exchange'?'⇄':'↩'} {rq.type}</span></td>
+                            <td>
+                              <div style={{display:'flex',alignItems:'center'}}>
+                                {(rq.items||[]).slice(0,3).map((it,i)=> it.image_url ? <img key={i} src={it.image_url} style={{width:24,height:24,borderRadius:5,objectFit:'cover',border:'2px solid var(--bg-card)',marginLeft:i>0?-9:0,flexShrink:0}} onError={e=>e.target.style.display='none'}/> : null)}
+                                <span style={{fontSize:10.5,color:'var(--text-muted)',marginLeft:5}}>{(rq.items||[]).length}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <div style={{display:'flex',flexDirection:'column',gap:3,alignItems:'flex-start'}}>
+                                <span className="badge-pill sm" style={pillStyle(STATUS_COLOR[rq.status]||'var(--text-muted)')}>{rq.status.replace(/_/g,' ')}</span>
+                                {rrIsPickupOverdue(rq) && <span style={{fontSize:9.5,color:'var(--red)',fontWeight:700}}>⏰ pickup overdue</span>}
+                                {overdueReview && <span style={{fontSize:9.5,color:'var(--red)',fontWeight:700}}>⚠ review overdue</span>}
+                                {(() => { const log = rrTrackingLogLine(rq); return log && <span style={{fontSize:9.5,color:'var(--indigo)',fontFamily:'var(--font-mono,monospace)'}}>📡 {log}</span>; })()}
+                              </div>
+                            </td>
+                            <td className="mono" style={{fontSize:10.5,color:'var(--text-muted)'}}>{rq.created_at?.split('T')[0]}</td>
+                            <td style={{textAlign:'center',color:'var(--text-muted)',fontSize:11}}>›</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              )}
+              </div>
+            ) : (
+            <div className="rr-list">
               {filtered.map(rq=>{
                 const needsReview = rrNeedsReview(rq);
                 const hrs = rrReceivedHoursSince(rq);
                 const overdueReview = needsReview && hrs!==null && hrs>=20;
-                if (!selected) {
-                  return (
-                    <div key={rq.request_id} className="rr-ticket rr-ticket-full" onClick={()=>setSelectedId(rq.request_id)}>
-                      <div style={{display:'flex',gap:10,alignItems:'flex-start'}}>
-                        <input type="checkbox" style={{marginTop:3,flexShrink:0}} checked={checkedIds.has(rq.request_id)} onClick={e=>e.stopPropagation()} onChange={()=>toggleChecked(rq.request_id)}/>
-                        <div style={{minWidth:0,flex:1}}>
-                        <div className="rr-ticket-id">{rq.request_id}</div>
-                        <div className="rr-ticket-order">{rq.order_name} · {rq.customer_name||rq.customer_email}</div>
-                        <div className="rr-ticket-meta" style={{marginTop:4}}>
-                          <span style={{color:TYPE_COLOR[rq.type]}}>{rq.type==='exchange'?'⇄':'↩'} {rq.type}</span>
-                          <span className="rr-dot"></span>
-                          <span>{rq.vendor_name||'—'}</span>
-                          <span className="rr-dot"></span>
-                          <span>{rq.customer_email}{rq.customer_phone?` · ${rq.customer_phone}`:''}</span>
-                          <span className="rr-dot"></span>
-                          <span>{rq.created_at?.split('T')[0]}</span>
-                          {rrIsPickupOverdue(rq) && <span className="badge-pill sm" style={pillStyle('#ef4444')}>⏰ overdue</span>}
-                        </div>
-                        {rq.reason && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>Reason: {rq.reason}</div>}
-                        <div className="rr-ticket-items">
-                          {(rq.items||[]).map((it,i)=>(
-                            <div key={i} className="rr-ticket-item-chip">
-                              {it.image_url && <img src={it.image_url} className="rr-item-thumb" onError={e=>e.target.style.display='none'}/>}
-                              <span>{it.title}{it.variant_title?` · ${it.variant_title}`:''} × {it.qty}</span>
-                            </div>
-                          ))}
-                        </div>
-                        {(() => { const log = rrTrackingLogLine(rq); return log && <div style={{fontSize:10.5,color:'var(--indigo)',marginTop:5,fontFamily:'var(--font-mono,monospace)'}}>📡 {log}</div>; })()}
-                        {overdueReview && <div className="rr-ticket-attn">⚠ {Math.floor(hrs)}h since received — review now</div>}
-                        </div>
-                      </div>
-                      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}>
-                        <span className="badge-pill" style={pillStyle(STATUS_COLOR[rq.status]||'var(--text-muted)')}>{rq.status.replace(/_/g,' ')}</span>
-                        {rq.silent_completed && <span className="badge-pill sm" title="Marked completed manually — no email/WhatsApp was sent" style={pillStyle('var(--text-muted)')}>🔇 silent</span>}
-                        <span style={{fontSize:10,color:'var(--text-muted)'}}>{(rq.items||[]).length} item{rq.items?.length!==1?'s':''}</span>
-                      </div>
-                    </div>
-                  );
-                }
                 return (
                   <div key={rq.request_id} className={`rr-ticket ${selected?.request_id===rq.request_id?'sel':''}`} onClick={()=>setSelectedId(rq.request_id)}>
                     <div className="rr-ticket-top">
@@ -7310,6 +7270,7 @@
                 );
               })}
             </div>
+            )}
 
             {selected && <div className="rr-detail">
               {!selected ? <div style={{padding:40,textAlign:'center',color:'var(--text-muted)'}}>Select a request from the list.</div> : (() => { const rq = selected; return (
