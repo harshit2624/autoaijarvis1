@@ -5802,9 +5802,9 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
     const vendorRRRegex = new RegExp('^' + req.vendor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
     const vRRDocs = await mdb.collection('return_requests').find(
       { vendor_name: { $regex: vendorRRRegex } },
-      { projection: { order_name: 1, type: 1, status: 1, _id: 0 } }
+      { projection: { order_name: 1, type: 1, status: 1, request_id: 1, _id: 0 } }
     ).toArray();
-    const vRRStageMap = {};
+    const vRRStageMap = {}; // { key: { bucket, request_id } }
     for (const r of vRRDocs) {
       const key = (r.order_name || '').replace(/^#/, '').toLowerCase();
       if (RR_TERMINAL_STATUSES.includes(r.status)) continue;
@@ -5814,7 +5814,7 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
         : (isExchange ? 'exchange_pending' : 'return_pending');
       const existing = vRRStageMap[key];
       const inFlight = (b) => b === 'return_pending' || b === 'exchange_pending';
-      if (!existing || (inFlight(bucket) && !inFlight(existing))) vRRStageMap[key] = bucket;
+      if (!existing || (inFlight(bucket) && !inFlight(existing.bucket))) vRRStageMap[key] = { bucket, request_id: r.request_id };
     }
 
     const orders = allOrders
@@ -5929,7 +5929,8 @@ app.get("/vendor/orders", vendorAuth, async (req, res) => {
             const matches = myItems.map(li => vCCInvMap[String(li.variant_id)]).filter(Boolean);
             return matches.length ? matches : null;
           })(),
-          rrStage: vRRStageMap[(o.name || '').replace(/^#/, '').toLowerCase()] || null,
+          rrStage: vRRStageMap[(o.name || '').replace(/^#/, '').toLowerCase()]?.bucket || null,
+          rrRequestId: vRRStageMap[(o.name || '').replace(/^#/, '').toLowerCase()]?.request_id || null,
         };
       });
 
@@ -8368,7 +8369,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
     });
 
     // Orders that have a return/exchange request (any status) — track type per order name
-    const rrDocs = await mdb.collection('return_requests').find({}, { projection: { order_name: 1, type: 1, status: 1, _id: 0 } }).toArray();
+    const rrDocs = await mdb.collection('return_requests').find({}, { projection: { order_name: 1, type: 1, status: 1, request_id: 1, _id: 0 } }).toArray();
     const rrOrderNames = new Set(rrDocs.map(r => (r.order_name || '').replace(/^#/, '').toLowerCase()));
     // Map order_name → types set ('return','exchange')
     const rrTypeMap = {};
@@ -8386,7 +8387,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
     // docs on one order (rare — e.g. two separate line items) resolve to
     // whichever is still in-flight over one that's already done, so the
     // order doesn't silently vanish from the "still needs action" pills.
-    const rrStageMap = {};
+    const rrStageMap = {}; // { key: { bucket, request_id } }
     for (const r of rrDocs) {
       const key = (r.order_name || '').replace(/^#/, '').toLowerCase();
       if (RR_TERMINAL_STATUSES.includes(r.status)) continue;
@@ -8396,7 +8397,7 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
         : (isExchange ? 'exchange_pending' : 'return_pending');
       const existing = rrStageMap[key];
       const inFlight = (b) => b === 'return_pending' || b === 'exchange_pending';
-      if (!existing || (inFlight(bucket) && !inFlight(existing))) rrStageMap[key] = bucket;
+      if (!existing || (inFlight(bucket) && !inFlight(existing.bucket))) rrStageMap[key] = { bucket, request_id: r.request_id };
     }
 
     // Real per-vendor commission rates — same lookup pattern as
@@ -8590,7 +8591,8 @@ app.get("/admin/orders", requirePermission('orders'), async (req, res) => {
         })(),
         hasRR: rrOrderNames.has((o.name || '').replace(/^#/, '').toLowerCase()),
         rrTypes: [...(rrTypeMap[(o.name || '').replace(/^#/, '').toLowerCase()] || [])],
-        rrStage: rrStageMap[(o.name || '').replace(/^#/, '').toLowerCase()] || null,
+        rrStage: rrStageMap[(o.name || '').replace(/^#/, '').toLowerCase()]?.bucket || null,
+        rrRequestId: rrStageMap[(o.name || '').replace(/^#/, '').toLowerCase()]?.request_id || null,
       };
     });
 

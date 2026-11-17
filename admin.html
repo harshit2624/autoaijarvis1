@@ -5607,7 +5607,7 @@
   /* ══════════════════════════════════
      ORDERS VIEW
   ══════════════════════════════════ */
-  function Orders({ token, initialStage, ordersCache }) {
+  function Orders({ token, initialStage, ordersCache, onGoToReturn }) {
     const [orders,    setOrders]   = useState(()=> ordersCache && ordersCache.current ? ordersCache.current : []);
     const [loading,   setLoading]  = useState(()=> !(ordersCache && ordersCache.current));
     const [stage,     setStage]    = useState(initialStage || 'all');
@@ -5879,7 +5879,7 @@
       const dsColor = ds==='Delivered'?'#10b981':ds&&/transit|shipped/i.test(ds)?'#06b6d4':ds&&/rto|return/i.test(ds)?'#ef4444':ds?'#f59e0b':'var(--text-muted)';
       return (
         <div style={{padding:'13px 14px',borderBottom:'1px solid var(--border)',display:'flex',gap:10,cursor:'pointer',background:isSelected?'rgba(99,102,241,0.08)':undefined}}
-          onClick={e=>{ if(e.target.type==='checkbox') return; setModal(o); }}>
+          onClick={e=>{ if(e.target.type==='checkbox') return; if(o.rrStage && o.rrRequestId && onGoToReturn){ onGoToReturn(o.rrRequestId); } else { setModal(o); } }}>
           <div style={{paddingTop:2}} onClick={e=>{ e.stopPropagation(); toggleSelect(o.shopifyId); }}>
             <input type="checkbox" style={{accentColor:'var(--indigo)',width:14,height:14,cursor:'pointer'}} checked={isSelected} onChange={()=>toggleSelect(o.shopifyId)}/>
           </div>
@@ -6349,7 +6349,7 @@
                      const totalConfirmedPenalty = Object.values(o.confirmedPenalties||{}).reduce((s,v)=>s+v,0);
                      return (
                        <tr key={o.id} style={{cursor:'pointer',background:isSelected?'rgba(99,102,241,0.07)':'',outline:isSelected?'1px solid rgba(99,102,241,0.3)':''}}
-                         onClick={e=>{ if(e.target.type==='checkbox') return; setModal(o); }}>
+                         onClick={e=>{ if(e.target.type==='checkbox') return; if(o.rrStage && o.rrRequestId && onGoToReturn){ onGoToReturn(o.rrRequestId); } else { setModal(o); } }}>
                          <td style={{paddingLeft:8}} onClick={e=>{ e.stopPropagation(); toggleSelect(o.shopifyId); }}>
                            <input type="checkbox" style={{accentColor:'var(--indigo)',width:13,height:13,cursor:'pointer'}} checked={isSelected} onChange={()=>toggleSelect(o.shopifyId)}/>
                          </td>
@@ -6994,6 +6994,16 @@
         .then(r=>r.json()).then(d=>setRequests(d.requests||[])).catch(()=>{}).finally(()=>setLoading(false));
     };
     useEffect(load, []);
+    // Deep-link from an Orders-page row (see onGoToReturn in the App shell)
+    // — request data loads async above, so this just seeds the id and
+    // clears any tab/filter that could otherwise hide it once it resolves.
+    useEffect(()=>{
+      if (window.__openReturnRequestId) {
+        setSelectedId(window.__openReturnRequestId);
+        setTab('all'); setTypeFilter('all'); setVendorFilter('all'); setSearch('');
+        window.__openReturnRequestId = null;
+      }
+    }, []);
     useEffect(()=>{
       fetch(`${API}/admin/vendors`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>setVendors((d.vendors||[]).map(v=>typeof v==='string'?v:v.name).filter(Boolean))).catch(()=>{});
     },[]);
@@ -19471,7 +19481,7 @@
           <AnnouncementBar token={token} endpoint={`${API}/admin/announcements/ticker`}/>
 
           {view==='dashboard'   && <Dashboard   token={token} onStageClick={handleStageClick} iconStyle={iconStyle} dashCache={dashCache}/>}
-          {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter} ordersCache={ordersCache}/>}
+          {view==='orders'      && <Orders      token={token} initialStage={stageFilter} key={stageFilter} ordersCache={ordersCache} onGoToReturn={(reqId)=>{ window.__openReturnRequestId=reqId; setView('returns'); }}/>}
           {view==='vendors'     && <Vendors     token={token} onNewAgreement={name=>{ setView('agreements'); window.__prefillAgreement=name; }}/>}
           {view==='returns'     && <ReturnRequests token={token}/>}
           {view==='ccinventory' && <CCInventory token={token}/>}

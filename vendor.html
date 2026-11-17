@@ -3924,6 +3924,17 @@
         .then(r=>r.json()).then(d=>setRequests(d.requests||[])).catch(()=>{}).finally(()=>setLoading(false));
     };
     useEffect(load, []);
+    // Deep-link from an Orders/Dashboard row (see openOrderOrReturn) — the
+    // request's own data arrives async above, so `selected` below just
+    // resolves once `requests` finishes loading; this only has to seed the
+    // id and make sure no stale tab/search is hiding it.
+    useEffect(()=>{
+      if (window.__openReturnRequestId) {
+        setSelectedId(window.__openReturnRequestId);
+        setTab('all'); setTypeFilter('all'); setSearch('');
+        window.__openReturnRequestId = null;
+      }
+    }, []);
 
     const saveNote = async (id) => {
       setSaving(true); setMsg(null);
@@ -5936,6 +5947,20 @@
     const [period,  setPeriod]  = useState(PERIOD_PRESETS[3]); // Last 30 Days
     const [modal,   setModal]   = useState(null); // selected order
     const [autoDelay, setAutoDelay] = useState(false); // scroll to delay section on open
+
+    // An order mid return/exchange has its own progress bar + shipment
+    // actions on the Returns page — the plain order modal has neither, so
+    // opening one from the Orders/Dashboard list jumps to Returns and
+    // pre-selects it there instead, via the same window-global handoff
+    // pattern already used for onNewAgreement in admin.html.
+    const openOrderOrReturn = (o) => {
+      if (o.rrStage && o.rrRequestId) {
+        window.__openReturnRequestId = o.rrRequestId;
+        setView('returns');
+      } else {
+        setModal(o);
+      }
+    };
     const [loginErr,setLoginErr]= useState('');
     const [loginLoad,setLoginLoad]=useState(false);
     const [sidebarOpen,setSidebarOpen]= useState(false);
@@ -6228,8 +6253,8 @@
               </div>
             </div>
           )}
-          {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={setModal} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}} vendorName={auth.vendorName}/>}
-          {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={setModal} token={auth.token} onRefresh={fetchData} stats={stats} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
+          {view==='dashboard'   && <Dashboard        stats={stats} orders={orders} loading={loading} onOpenOrder={openOrderOrReturn} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}} vendorName={auth.vendorName}/>}
+          {view==='orders'      && <Orders           orders={orders} loading={loading} onOpenOrder={openOrderOrReturn} token={auth.token} onRefresh={fetchData} stats={stats} period={period} onPeriodChange={p=>{setPeriod(p);fetchData(p);}}/>}
           {view==='products'    && <Products          token={auth.token} vendorName={auth.vendorName} onGoToShopifySync={()=>setView('shopifysync')}/>}
           {view==='brandpage'   && <VendorBranding    token={auth.token} vendorName={auth.vendorName} onStatusChange={complete=>setBrandingIncomplete(complete===null?null:!complete)}/>}
           {view==='shipping'    && <ShippingPartners  token={auth.token}/>}
