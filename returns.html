@@ -99,10 +99,20 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
   background:var(--surface);border-bottom:1px solid var(--border);
   padding:20px;display:flex;align-items:center;gap:14px
 }
-.order-thumb{width:52px;height:52px;border-radius:10px;object-fit:cover;
-  border:1px solid var(--border);background:var(--bg);flex-shrink:0}
 .order-thumb-ph{width:52px;height:52px;border-radius:10px;background:var(--bg);
   border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+/* Stacked thumbnail row — one small photo per item (not just the first),
+   so a multi-item order reads as "these products", not "1 photo + a
+   number", which is what was confusing customers before. Overlapped
+   like an avatar stack to stay compact at any item count; a "+N" chip
+   caps it instead of growing the header for large orders. */
+.order-thumbs{display:flex;align-items:center;flex-shrink:0}
+.order-thumb-sm{width:38px;height:38px;border-radius:9px;object-fit:cover;
+  border:2px solid var(--surface);background:var(--bg);flex-shrink:0;margin-left:-12px}
+.order-thumb-sm:first-child{margin-left:0}
+.order-thumbs-more{width:38px;height:38px;border-radius:9px;background:var(--bg);
+  border:2px solid var(--surface);display:flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:700;color:var(--muted);flex-shrink:0;margin-left:-12px}
 .order-card-info{flex:1;min-width:0}
 .order-card-name{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
 .order-card-title{font-size:14px;font-weight:700;color:var(--text);margin-top:2px;
@@ -467,10 +477,10 @@ html,body{min-height:100%;background:var(--bg);color:var(--text);
 <div id="portal-screen" class="screen">
   <!-- Order mini-card -->
   <div class="order-card">
-    <div class="order-thumb-ph" id="order-thumb-ph">
+    <div class="order-thumb-ph hidden" id="order-thumb-ph">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
     </div>
-    <img id="order-thumb" class="order-thumb hidden" alt="">
+    <div class="order-thumbs" id="order-thumbs"></div>
     <div class="order-card-info">
       <div class="order-card-name" id="order-card-name">ORDER</div>
       <div class="order-card-title" id="order-card-title">—</div>
@@ -771,11 +781,18 @@ function renderPortal(d) {
   document.getElementById('order-card-title').textContent = title;
   document.getElementById('order-card-sub').textContent = `₹${fmt(d.total)} · ${d.is_prepaid ? 'Prepaid' : 'COD'}`;
 
-  const firstImg = d.items?.find(i => i.image_url)?.image_url;
-  if (firstImg) {
-    const th = document.getElementById('order-thumb');
-    th.src = firstImg; th.classList.remove('hidden');
+  const itemsWithImg = (d.items || []).filter(i => i.image_url);
+  const thumbsEl = document.getElementById('order-thumbs');
+  const MAX_THUMBS = 4;
+  if (itemsWithImg.length) {
+    const shown = itemsWithImg.slice(0, MAX_THUMBS);
+    const extra = itemsWithImg.length - shown.length;
+    thumbsEl.innerHTML = shown.map(i => `<img class="order-thumb-sm" src="${esc(i.image_url)}" alt="${esc(i.title || '')}">`).join('')
+      + (extra > 0 ? `<div class="order-thumbs-more">+${extra}</div>` : '');
     document.getElementById('order-thumb-ph').classList.add('hidden');
+  } else {
+    thumbsEl.innerHTML = '';
+    document.getElementById('order-thumb-ph').classList.remove('hidden');
   }
 
   const stage = d.stage || 'new';
