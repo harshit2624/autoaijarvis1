@@ -3103,6 +3103,7 @@
                     {(s.extra_advance||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Extra Advance</span><span>−₹{(s.extra_advance).toFixed(2)}</span></div>}
                     {(s.shipping_adjustment||0)!==0 && <div className="inv-row"><span>Shipping Adj.</span><span>{s.shipping_adjustment>0?'+':'−'}₹{Math.abs(s.shipping_adjustment).toFixed(2)}</span></div>}
                     {(s.rto_credit_total||0)>0 && <div className="inv-row" style={{color:'#3b82f6',fontWeight:600}}><span>✓ RTO Partial Payment Credited</span><span>−₹{(s.rto_credit_total).toFixed(2)}</span></div>}
+                    {(s.fee_credit_total||0)>0 && <div className="inv-row" style={{color:'#a855f7',fontWeight:600}}><span>✓ Return/Exchange Fee Credited</span><span>−₹{(s.fee_credit_total).toFixed(2)}</span></div>}
                   </div>
                   <div className="inv-row inv-total">
                     <span>{isCredit ? '↑ CROSCROW Pays Vendor' : '↓ Vendor Pays CROSCROW'}</span>
@@ -3149,6 +3150,12 @@
                     <div className="inv-pay-row">
                       <span style={{color:'#3b82f6'}}>✓ RTO Partial Payment Credited</span>
                       <span style={{fontWeight:700,color:'#3b82f6'}}>−₹{(s.rto_credit_total).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {(s.fee_credit_total||0)>0 && (
+                    <div className="inv-pay-row">
+                      <span style={{color:'#a855f7'}}>✓ Return/Exchange Fee Credited</span>
+                      <span style={{fontWeight:700,color:'#a855f7'}}>−₹{(s.fee_credit_total).toFixed(2)}</span>
                     </div>
                   )}
                   <div className="inv-pay-row" style={{borderTop:'2px solid #ddd',fontWeight:700}}>
@@ -7865,10 +7872,15 @@
     const [includeOutstanding, setIncludeOutstanding] = useState(false);
     const [outstandingRto, setOutstandingRto] = useState(null); // { count, amount } — uncredited partial payment on this vendor's RTO orders
     const [includeRtoCredit, setIncludeRtoCredit] = useState(false);
+    const [outstandingFeeAll,       setOutstandingFeeAll]       = useState(null); // { count, amount } — uncredited RR fee, any status
+    const [outstandingFeeCompleted, setOutstandingFeeCompleted] = useState(null); // { count, amount } — uncredited RR fee, completed only
+    const [includeFeeAll,       setIncludeFeeAll]       = useState(false);
+    const [includeFeeCompleted, setIncludeFeeCompleted] = useState(false);
 
     const penaltyAmt = init.penalty_deduction || 0;
     const outstandingAmt = includeOutstanding ? (outstandingPen?.amount || 0) : 0;
     const rtoCreditAmt = includeRtoCredit ? (outstandingRto?.amount || 0) : 0;
+    const feeCreditAmt = includeFeeAll ? (outstandingFeeAll?.amount || 0) : (includeFeeCompleted ? (outstandingFeeCompleted?.amount || 0) : 0);
 
     // Fetch how many outstanding (incl. non-delivered-order) penalties exist for this vendor
     useEffect(()=>{
@@ -7876,6 +7888,10 @@
         .then(r=>r.json()).then(d=>setOutstandingPen(d)).catch(()=>{});
       fetch(`${API}/admin/settlements/${init.id}/outstanding-rto-credit`, { headers:{ Authorization:`Bearer ${token}` } })
         .then(r=>r.json()).then(d=>setOutstandingRto(d)).catch(()=>{});
+      fetch(`${API}/admin/settlements/${init.id}/outstanding-fee-credit?scope=all`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setOutstandingFeeAll(d)).catch(()=>{});
+      fetch(`${API}/admin/settlements/${init.id}/outstanding-fee-credit?scope=completed`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setOutstandingFeeCompleted(d)).catch(()=>{});
     },[]);
 
     // Live preview (simplified — full recalc happens server-side)
@@ -7890,9 +7906,9 @@
         + (init.extra_advance||0)
         - (init.shipping_adjustment||0)
         + (init.penalty_waiver_amount||0);
-      const adjusted = parseFloat((baseNet + outstandingAmt - disc - adv + ship - waiver - rtoCreditAmt).toFixed(2));
+      const adjusted = parseFloat((baseNet + outstandingAmt - disc - adv + ship - waiver - rtoCreditAmt - feeCreditAmt).toFixed(2));
       setPreview({ netPayable: adjusted, waiverAmt: waiver });
-    },[discount, shipping, extraAdv, waiverPct, includeOutstanding, outstandingPen, includeRtoCredit, outstandingRto]);
+    },[discount, shipping, extraAdv, waiverPct, includeOutstanding, outstandingPen, includeRtoCredit, outstandingRto, includeFeeAll, includeFeeCompleted, outstandingFeeAll, outstandingFeeCompleted]);
 
     const save = async () => {
       setSaving(true); setMsg(null);
@@ -7906,6 +7922,8 @@
           include_outstanding_penalties: includeOutstanding,
           bear_cod_discount:   bearCodDisc,
           include_rto_partial_collected: includeRtoCredit,
+          include_fee_collected_all:       includeFeeAll,
+          include_fee_collected_completed: includeFeeCompleted,
         };
         if (commPct.trim()) body.custom_commission_pct = parseFloat(commPct);
         if (ppDisc.trim())  body.prepaid_discount_pct  = parseFloat(ppDisc);
@@ -7918,7 +7936,8 @@
         const waiverNote = d.waiverAmount > 0 ? ` · Penalty waiver ₹${d.waiverAmount.toFixed(2)} applied` : '';
         const addedNote  = d.addedPenaltyAmount > 0 ? ` · +₹${d.addedPenaltyAmount.toFixed(2)} outstanding penalties added` : '';
         const rtoNote    = d.addedRtoCreditAmount > 0 ? ` · ₹${d.addedRtoCreditAmount.toFixed(2)} RTO partial-payment credited to vendor` : '';
-        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CROSCROW pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}${waiverNote}${addedNote}${rtoNote}` });
+        const feeNote    = d.addedFeeCreditAmount > 0 ? ` · ₹${d.addedFeeCreditAmount.toFixed(2)} return/exchange fee credited to vendor` : '';
+        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CROSCROW pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}${waiverNote}${addedNote}${rtoNote}${feeNote}` });
         onSaved();
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setSaving(false);
@@ -8033,6 +8052,40 @@
                     </div>
                   </div>
                 </label>
+              </div>
+            )}
+
+            {/* Section: Return/exchange fee credit */}
+            {(outstandingFeeAll?.count > 0 || outstandingFeeCompleted?.count > 0) && (
+              <div style={{background:'rgba(168,85,247,0.05)',border:'1px solid rgba(168,85,247,0.2)',borderRadius:8,padding:14,marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:600,color:'var(--text)',marginBottom:10}}>Return/Exchange Fee Collected</div>
+                {outstandingFeeAll?.count > 0 && (
+                  <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer',marginBottom:10}}>
+                    <input type="checkbox" checked={includeFeeAll} onChange={e=>{ setIncludeFeeAll(e.target.checked); if (e.target.checked) setIncludeFeeCompleted(false); }} style={{marginTop:2}}/>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
+                        Send all fee collected — {outstandingFeeAll.count} request{outstandingFeeAll.count===1?'':'s'}, <strong style={{color:'#a855f7'}}>₹{outstandingFeeAll.amount.toFixed(2)}</strong>
+                      </div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
+                        Every paid (non-waived) return/exchange fee CROSCROW has collected from customers on this vendor's orders, regardless of request status.
+                      </div>
+                    </div>
+                  </label>
+                )}
+                {outstandingFeeCompleted?.count > 0 && (
+                  <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer'}}>
+                    <input type="checkbox" checked={includeFeeCompleted} onChange={e=>{ setIncludeFeeCompleted(e.target.checked); if (e.target.checked) setIncludeFeeAll(false); }} style={{marginTop:2}}/>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
+                        Send fee collected for completed orders only — {outstandingFeeCompleted.count} request{outstandingFeeCompleted.count===1?'':'s'}, <strong style={{color:'#a855f7'}}>₹{outstandingFeeCompleted.amount.toFixed(2)}</strong>
+                      </div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
+                        Only the fee on requests that have fully reached "Completed" — not ones still pending, in transit, or under QC.
+                      </div>
+                    </div>
+                  </label>
+                )}
+                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:10}}>Each request's fee is credited only once, ever, across all settlements — picking one option here doesn't double-count requests already covered by the other.</div>
               </div>
             )}
 

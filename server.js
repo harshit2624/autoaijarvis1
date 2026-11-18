@@ -9329,6 +9329,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       penalty_deduction: 0, extra_discount: 0, shipping_adjustment: 0, extra_advance: 0, invoice_notes: '',
       bear_cod_discount: false, cod_discount_total: 0,
       rto_credit_total: 0, rto_credit_included: false,
+      fee_credit_total: 0, fee_credit_scope: null,
     });
 
     if (orderDetails.length > 0) {
@@ -10478,6 +10479,34 @@ app.get("/admin/settlements/:id/outstanding-rto-credit", adminAuth, async (req, 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── GET /admin/settlements/:id/outstanding-fee-credit ────────────────────
+// Preview the RR fee CROSCROW collected on this vendor's return/exchange
+// requests that hasn't yet been credited back to them. scope=all counts
+// every paid (non-waived) request; scope=completed only ones resolved.
+app.get("/admin/settlements/:id/outstanding-fee-credit", adminAuth, async (req, res) => {
+  try {
+    const sid = parseInt(req.params.id);
+    const scope = req.query.scope === 'completed' ? 'completed' : 'all';
+    const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { vendor_name: 1, _id: 0 } });
+    if (!s) return res.status(404).json({ error: "Not found." });
+    const query = { vendor_name: s.vendor_name, fee_paid: true };
+    if (scope === 'completed') query.status = 'completed';
+    const rrs = await mdb.collection('return_requests').find(query, { projection: { request_id: 1, fee_amount: 1, _id: 0 } }).toArray();
+    if (rrs.length === 0) return res.json({ count: 0, amount: 0 });
+    const alreadyCreditedDocs = await mdb.collection('settlement_fee_credits').find({}, { projection: { request_id: 1, _id: 0 } }).toArray();
+    const alreadyCredited = new Set(alreadyCreditedDocs.map(d => d.request_id));
+    let count = 0, amount = 0;
+    for (const rr of rrs) {
+      if (alreadyCredited.has(rr.request_id)) continue;
+      const fee = rr.fee_amount != null ? rr.fee_amount : 199;
+      if (fee <= 0) continue;
+      amount += fee;
+      count++;
+    }
+    res.json({ count, amount: parseFloat(amount.toFixed(2)) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── PUT /admin/settlements/:id/edit ───────────────────────────────────────
 app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   const sid = parseInt(req.params.id);
@@ -10495,7 +10524,40 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     include_outstanding_penalties = false, // fold in confirmed penalties on non-delivered (or otherwise out-of-period) orders
     bear_cod_discount,  // when true, CROSCROW absorbs the COD checkout-discount cost out of its own commission instead of the vendor silently collecting less cash
     include_rto_partial_collected = false, // credit back the advance/partial payment collected on this vendor's RTO orders, to cover their logistics loss
+    include_fee_collected_all = false,       // credit back the RR fee collected on ALL this vendor's paid return/exchange requests
+    include_fee_collected_completed = false, // credit back the RR fee collected only on requests that reached 'completed'
   } = req.body || {};
+
+  // ── Return/exchange fee credit ──────────────────────────────────────────
+  // CROSCROW collects the ₹199(ish) RR fee from the customer, not the vendor —
+  // this sends that collected fee back to the vendor. 'all' takes priority
+  // over 'completed' when both are checked, since completed is a subset of
+  // all; either way each request_id is credited only once, ever, tracked in
+  // settlement_fee_credits (same dedup pattern as the RTO/penalty credits).
+  let addedFeeCreditAmount = 0;
+  let addedFeeRequestIds = [];
+  const feeScope = include_fee_collected_all ? 'all' : (include_fee_collected_completed ? 'completed' : null);
+  if (feeScope) {
+    const feeQuery = { vendor_name: s.vendor_name, fee_paid: true };
+    if (feeScope === 'completed') feeQuery.status = 'completed';
+    const eligibleRRs = await mdb.collection('return_requests').find(feeQuery, { projection: { request_id: 1, fee_amount: 1, _id: 0 } }).toArray();
+    if (eligibleRRs.length > 0) {
+      const alreadyCreditedDocs = await mdb.collection('settlement_fee_credits').find({}, { projection: { request_id: 1, _id: 0 } }).toArray();
+      const alreadyCredited = new Set(alreadyCreditedDocs.map(d => d.request_id));
+      const creditDocs = [];
+      for (const rr of eligibleRRs) {
+        if (alreadyCredited.has(rr.request_id)) continue;
+        const fee = rr.fee_amount != null ? rr.fee_amount : 199;
+        if (fee <= 0) continue;
+        addedFeeCreditAmount += fee;
+        addedFeeRequestIds.push(rr.request_id);
+        creditDocs.push({ id: await nextId('settlement_fee_credits'), settlement_id: sid, request_id: rr.request_id, amount: fee });
+      }
+      addedFeeCreditAmount = parseFloat(addedFeeCreditAmount.toFixed(2));
+      if (creditDocs.length) await mdb.collection('settlement_fee_credits').insertMany(creditDocs);
+    }
+  }
+  const feeCreditTotal = parseFloat(((s.fee_credit_total || 0) + addedFeeCreditAmount).toFixed(2));
 
   // ── RTO partial-payment credit ──────────────────────────────────────────
   // The customer's online advance/partial payment on a COD order is collected
@@ -10676,6 +10738,7 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     - parseFloat(extra_advance  || 0)
     + parseFloat(shipping_adjustment || 0)
     - rtoCreditTotal
+    - feeCreditTotal
   ).toFixed(2));
 
   await mdb.collection('settlements').updateOne({ id: sid }, { $set: {
@@ -10693,6 +10756,8 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     penalty_deduction:   penaltyDeductionTotal,
     rto_credit_total:    rtoCreditTotal,
     rto_credit_included: !!include_rto_partial_collected,
+    fee_credit_total:    feeCreditTotal,
+    fee_credit_scope:    feeScope || s.fee_credit_scope || null,
     net_payable: adjustedNet,
   }});
 
@@ -10702,8 +10767,11 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   if (addedRtoOrderIds.length) {
     auditLog("admin", "settlement_rto_credit_added", req.params.id, { vendor: s.vendor_name, addedRtoCreditAmount, orderIds: addedRtoOrderIds });
   }
+  if (addedFeeRequestIds.length) {
+    auditLog("admin", "settlement_fee_credit_added", req.params.id, { vendor: s.vendor_name, addedFeeCreditAmount, scope: feeScope, requestIds: addedFeeRequestIds });
+  }
   auditLog("admin", "settlement_edited", req.params.id, req.body);
-  res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst, waiverAmount, addedPenaltyAmount, penaltyDeductionTotal, addedRtoCreditAmount, rtoCreditTotal });
+  res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst, waiverAmount, addedPenaltyAmount, penaltyDeductionTotal, addedRtoCreditAmount, rtoCreditTotal, addedFeeCreditAmount, feeCreditTotal });
 });
 
 // ── PUT /admin/settlements/:id/mark-paid ──────────────────────────────────
@@ -24508,6 +24576,7 @@ app.post("/track/request", async (req, res) => {
       const rand = String(Math.floor(Math.random() * 9000) + 1000);
       const request_id = groups.length > 1 ? `RR-${datePart}-${rand}-${i}` : `RR-${datePart}-${rand}`;
       const priceDiffTotal = +vendorItems.reduce((s, it) => s + (it.price_diff || 0), 0).toFixed(2);
+      const vendorFeeForDoc = isFeeWaived ? 0 : (await mdb.collection('return_configs').findOne({ vendor_name: vendorName }, { projection: { rr_fee: 1, _id: 0 } }))?.rr_fee ?? 199;
 
       const doc = {
         request_id,
@@ -24527,6 +24596,10 @@ app.post("/track/request", async (req, res) => {
         payment_id: payment_id || null,
         razorpay_order_id: razorpay_order_id || null,
         fee_paid: payment_id ? true : (isFeeWaived ? 'waived' : false),
+        // The flat RR fee portion only — excludes any swap price_diff the
+        // customer paid on top (see price_diff_total below), so settlement
+        // fee-credit math never double-counts the swap-exchange price math.
+        fee_amount: payment_id ? (vendorFeeForDoc ?? 199) : 0,
         image_urls: cleanImageUrls,
         // Swap-exchange price math — positive means the customer paid the
         // difference on top of the fee already (see /track/razorpay-order);
