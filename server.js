@@ -10446,14 +10446,20 @@ app.get("/admin/settlements/:id/outstanding-penalties", adminAuth, async (req, r
 app.get("/admin/settlements/:id/outstanding-rto-credit", adminAuth, async (req, res) => {
   try {
     const sid = parseInt(req.params.id);
-    const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { vendor_name: 1, _id: 0 } });
+    const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { vendor_name: 1, period_start: 1, period_end: 1, _id: 0 } });
     if (!s) return res.status(404).json({ error: "Not found." });
     const vendorRegex = new RegExp('^' + s.vendor_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
     const rtoRows = await mdb.collection('order_vendor_stage').find(
       { vendor_name: { $regex: vendorRegex }, stage: 'rto' },
       { projection: { shopify_id: 1, _id: 0 } }
     ).toArray();
-    const rtoOrderIds = [...new Set(rtoRows.map(r => r.shopify_id))];
+    // Scope to orders actually CREATED within this invoice's own period
+    // (e.g. Oct only) — matches how settlement generation itself scopes
+    // orders, so the credit lines up with the invoice it's attached to
+    // instead of sweeping in every RTO order the vendor has ever had.
+    const periodOrders = await fetchAllOrders("any", istDayStart(s.period_start).toISOString(), istDayEnd(s.period_end).toISOString());
+    const periodOrderIds = new Set(periodOrders.map(o => String(o.id)));
+    const rtoOrderIds = [...new Set(rtoRows.map(r => r.shopify_id))].filter(id => periodOrderIds.has(id));
     if (rtoOrderIds.length === 0) return res.json({ count: 0, amount: 0 });
     const alreadyCreditedDocs = await mdb.collection('settlement_rto_credits').find({}, { projection: { shopify_order_id: 1, _id: 0 } }).toArray();
     const alreadyCredited = new Set(alreadyCreditedDocs.map(d => d.shopify_order_id));
@@ -10487,9 +10493,15 @@ app.get("/admin/settlements/:id/outstanding-fee-credit", adminAuth, async (req, 
   try {
     const sid = parseInt(req.params.id);
     const scope = req.query.scope === 'completed' ? 'completed' : 'all';
-    const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { vendor_name: 1, _id: 0 } });
+    const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { vendor_name: 1, period_start: 1, period_end: 1, _id: 0 } });
     if (!s) return res.status(404).json({ error: "Not found." });
-    const query = { vendor_name: s.vendor_name, fee_paid: true };
+    // Scoped to RR requests SUBMITTED within this invoice's own period —
+    // same reasoning as the RTO credit above, so "Oct" only pulls in fees
+    // from requests actually raised in Oct, not the vendor's entire history.
+    const query = {
+      vendor_name: s.vendor_name, fee_paid: true,
+      created_at: { $gte: istDayStart(s.period_start).toISOString(), $lte: istDayEnd(s.period_end).toISOString() },
+    };
     if (scope === 'completed') query.status = 'completed';
     const rrs = await mdb.collection('return_requests').find(query, { projection: { request_id: 1, fee_amount: 1, _id: 0 } }).toArray();
     if (rrs.length === 0) return res.json({ count: 0, amount: 0 });
@@ -10538,7 +10550,13 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   let addedFeeRequestIds = [];
   const feeScope = include_fee_collected_all ? 'all' : (include_fee_collected_completed ? 'completed' : null);
   if (feeScope) {
-    const feeQuery = { vendor_name: s.vendor_name, fee_paid: true };
+    // Scoped to this invoice's own period — same reasoning as the RTO
+    // credit below, so e.g. an Oct invoice only pulls fees from requests
+    // actually submitted in Oct, not the vendor's entire history.
+    const feeQuery = {
+      vendor_name: s.vendor_name, fee_paid: true,
+      created_at: { $gte: istDayStart(s.period_start).toISOString(), $lte: istDayEnd(s.period_end).toISOString() },
+    };
     if (feeScope === 'completed') feeQuery.status = 'completed';
     const eligibleRRs = await mdb.collection('return_requests').find(feeQuery, { projection: { request_id: 1, fee_amount: 1, _id: 0 } }).toArray();
     if (eligibleRRs.length > 0) {
@@ -10573,7 +10591,11 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
       { vendor_name: { $regex: vendorRegex }, stage: 'rto' },
       { projection: { shopify_id: 1, _id: 0 } }
     ).toArray();
-    const rtoOrderIds = [...new Set(rtoRows.map(r => r.shopify_id))];
+    // Scoped to orders CREATED within this invoice's own period (e.g. Oct
+    // only) — matches how settlement generation itself scopes orders.
+    const periodOrders = await fetchAllOrders("any", istDayStart(s.period_start).toISOString(), istDayEnd(s.period_end).toISOString());
+    const periodOrderIds = new Set(periodOrders.map(o => String(o.id)));
+    const rtoOrderIds = [...new Set(rtoRows.map(r => r.shopify_id))].filter(id => periodOrderIds.has(id));
     if (rtoOrderIds.length > 0) {
       const alreadyCreditedDocs = await mdb.collection('settlement_rto_credits').find({}, { projection: { shopify_order_id: 1, _id: 0 } }).toArray();
       const alreadyCredited = new Set(alreadyCreditedDocs.map(d => d.shopify_order_id));
