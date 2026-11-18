@@ -9328,6 +9328,7 @@ app.post("/admin/settlements/generate", adminAuth, async (req, res) => {
       created_at: new Date().toISOString(),
       penalty_deduction: 0, extra_discount: 0, shipping_adjustment: 0, extra_advance: 0, invoice_notes: '',
       bear_cod_discount: false, cod_discount_total: 0,
+      rto_credit_total: 0, rto_credit_included: false,
     });
 
     if (orderDetails.length > 0) {
@@ -10436,6 +10437,47 @@ app.get("/admin/settlements/:id/outstanding-penalties", adminAuth, async (req, r
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── GET /admin/settlements/:id/outstanding-rto-credit ────────────────────
+// Preview the partial/advance payment collected on this vendor's RTO orders
+// that hasn't yet been credited back to them on any settlement — covers the
+// forward+reverse logistics cost the vendor already ate on an order that
+// never delivered.
+app.get("/admin/settlements/:id/outstanding-rto-credit", adminAuth, async (req, res) => {
+  try {
+    const sid = parseInt(req.params.id);
+    const s = await mdb.collection('settlements').findOne({ id: sid }, { projection: { vendor_name: 1, _id: 0 } });
+    if (!s) return res.status(404).json({ error: "Not found." });
+    const vendorRegex = new RegExp('^' + s.vendor_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const rtoRows = await mdb.collection('order_vendor_stage').find(
+      { vendor_name: { $regex: vendorRegex }, stage: 'rto' },
+      { projection: { shopify_id: 1, _id: 0 } }
+    ).toArray();
+    const rtoOrderIds = [...new Set(rtoRows.map(r => r.shopify_id))];
+    if (rtoOrderIds.length === 0) return res.json({ count: 0, amount: 0 });
+    const alreadyCreditedDocs = await mdb.collection('settlement_rto_credits').find({}, { projection: { shopify_order_id: 1, _id: 0 } }).toArray();
+    const alreadyCredited = new Set(alreadyCreditedDocs.map(d => d.shopify_order_id));
+    const newOrderIds = rtoOrderIds.filter(id => !alreadyCredited.has(id));
+    if (newOrderIds.length === 0) return res.json({ count: 0, amount: 0 });
+    const metas = await mdb.collection('order_meta').find({ shopify_id: { $in: newOrderIds } }, { projection: { shopify_id: 1, advance_paid: 1, _id: 0 } }).toArray();
+    const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+    const allVendorRows = await mdb.collection('order_vendor_stage').find({ shopify_id: { $in: newOrderIds } }, { projection: { shopify_id: 1, vendor_name: 1, _id: 0 } }).toArray();
+    const vendorCountPerOrder = {};
+    for (const r of allVendorRows) {
+      if (!vendorCountPerOrder[r.shopify_id]) vendorCountPerOrder[r.shopify_id] = new Set();
+      vendorCountPerOrder[r.shopify_id].add((r.vendor_name || '').toLowerCase());
+    }
+    let count = 0, amount = 0;
+    for (const oid of newOrderIds) {
+      const adv = parseFloat(metaMap[oid]?.advance_paid || 0);
+      if (adv <= 0) continue;
+      const vCount = vendorCountPerOrder[oid]?.size || 1;
+      amount += adv / vCount;
+      count++;
+    }
+    res.json({ count, amount: parseFloat(amount.toFixed(2)) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── PUT /admin/settlements/:id/edit ───────────────────────────────────────
 app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
   const sid = parseInt(req.params.id);
@@ -10452,7 +10494,53 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     penalty_waiver_pct  = 0, // 0-100: % of penalty_deduction to waive
     include_outstanding_penalties = false, // fold in confirmed penalties on non-delivered (or otherwise out-of-period) orders
     bear_cod_discount,  // when true, CROSCROW absorbs the COD checkout-discount cost out of its own commission instead of the vendor silently collecting less cash
+    include_rto_partial_collected = false, // credit back the advance/partial payment collected on this vendor's RTO orders, to cover their logistics loss
   } = req.body || {};
+
+  // ── RTO partial-payment credit ──────────────────────────────────────────
+  // The customer's online advance/partial payment on a COD order is collected
+  // by CROSCROW, not the vendor. If the order comes back RTO, the vendor still
+  // ate the forward+reverse shipping cost, so that collected amount is credited
+  // back to them here — tracked in settlement_rto_credits (one row per order,
+  // never double-credited across settlements, same dedup pattern as penalties).
+  let addedRtoCreditAmount = 0;
+  let addedRtoOrderIds = [];
+  if (include_rto_partial_collected) {
+    const vendorRegex = new RegExp('^' + s.vendor_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+    const rtoRows = await mdb.collection('order_vendor_stage').find(
+      { vendor_name: { $regex: vendorRegex }, stage: 'rto' },
+      { projection: { shopify_id: 1, _id: 0 } }
+    ).toArray();
+    const rtoOrderIds = [...new Set(rtoRows.map(r => r.shopify_id))];
+    if (rtoOrderIds.length > 0) {
+      const alreadyCreditedDocs = await mdb.collection('settlement_rto_credits').find({}, { projection: { shopify_order_id: 1, _id: 0 } }).toArray();
+      const alreadyCredited = new Set(alreadyCreditedDocs.map(d => d.shopify_order_id));
+      const newOrderIds = rtoOrderIds.filter(id => !alreadyCredited.has(id));
+      if (newOrderIds.length > 0) {
+        const metas = await mdb.collection('order_meta').find({ shopify_id: { $in: newOrderIds } }, { projection: { shopify_id: 1, advance_paid: 1, _id: 0 } }).toArray();
+        const metaMap = Object.fromEntries(metas.map(m => [m.shopify_id, m]));
+        const allVendorRows = await mdb.collection('order_vendor_stage').find({ shopify_id: { $in: newOrderIds } }, { projection: { shopify_id: 1, vendor_name: 1, _id: 0 } }).toArray();
+        const vendorCountPerOrder = {};
+        for (const r of allVendorRows) {
+          if (!vendorCountPerOrder[r.shopify_id]) vendorCountPerOrder[r.shopify_id] = new Set();
+          vendorCountPerOrder[r.shopify_id].add((r.vendor_name || '').toLowerCase());
+        }
+        const creditDocs = [];
+        for (const oid of newOrderIds) {
+          const adv = parseFloat(metaMap[oid]?.advance_paid || 0);
+          if (adv <= 0) continue;
+          const vCount = vendorCountPerOrder[oid]?.size || 1;
+          const share = parseFloat((adv / vCount).toFixed(2));
+          addedRtoCreditAmount += share;
+          addedRtoOrderIds.push(oid);
+          creditDocs.push({ id: await nextId('settlement_rto_credits'), settlement_id: sid, shopify_order_id: oid, amount: share });
+        }
+        addedRtoCreditAmount = parseFloat(addedRtoCreditAmount.toFixed(2));
+        if (creditDocs.length) await mdb.collection('settlement_rto_credits').insertMany(creditDocs);
+      }
+    }
+  }
+  const rtoCreditTotal = parseFloat(((s.rto_credit_total || 0) + addedRtoCreditAmount).toFixed(2));
 
   // Pull in any confirmed penalty for this vendor not yet tied to ANY
   // settlement — order_penalties has no delivered-order filter, so this
@@ -10587,6 +10675,7 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     - parseFloat(extra_discount || 0)
     - parseFloat(extra_advance  || 0)
     + parseFloat(shipping_adjustment || 0)
+    - rtoCreditTotal
   ).toFixed(2));
 
   await mdb.collection('settlements').updateOne({ id: sid }, { $set: {
@@ -10602,14 +10691,19 @@ app.put("/admin/settlements/:id/edit", adminAuth, async (req, res) => {
     penalty_waiver_pct:  waiverPct,
     penalty_waiver_amount: waiverAmount,
     penalty_deduction:   penaltyDeductionTotal,
+    rto_credit_total:    rtoCreditTotal,
+    rto_credit_included: !!include_rto_partial_collected,
     net_payable: adjustedNet,
   }});
 
   if (addedPenaltyIds.length) {
     auditLog("admin", "settlement_outstanding_penalties_added", req.params.id, { vendor: s.vendor_name, addedPenaltyAmount, penaltyIds: addedPenaltyIds });
   }
+  if (addedRtoOrderIds.length) {
+    auditLog("admin", "settlement_rto_credit_added", req.params.id, { vendor: s.vendor_name, addedRtoCreditAmount, orderIds: addedRtoOrderIds });
+  }
   auditLog("admin", "settlement_edited", req.params.id, req.body);
-  res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst, waiverAmount, addedPenaltyAmount, penaltyDeductionTotal });
+  res.json({ success: true, netPayable: adjustedNet, commission: newCommission, gst: newGst, waiverAmount, addedPenaltyAmount, penaltyDeductionTotal, addedRtoCreditAmount, rtoCreditTotal });
 });
 
 // ── PUT /admin/settlements/:id/mark-paid ──────────────────────────────────

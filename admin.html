@@ -3102,6 +3102,7 @@
                     {(s.extra_discount||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Extra Discount</span><span>−₹{(s.extra_discount).toFixed(2)}</span></div>}
                     {(s.extra_advance||0)>0 && <div className="inv-row" style={{color:'#555'}}><span>Extra Advance</span><span>−₹{(s.extra_advance).toFixed(2)}</span></div>}
                     {(s.shipping_adjustment||0)!==0 && <div className="inv-row"><span>Shipping Adj.</span><span>{s.shipping_adjustment>0?'+':'−'}₹{Math.abs(s.shipping_adjustment).toFixed(2)}</span></div>}
+                    {(s.rto_credit_total||0)>0 && <div className="inv-row" style={{color:'#3b82f6',fontWeight:600}}><span>✓ RTO Partial Payment Credited</span><span>−₹{(s.rto_credit_total).toFixed(2)}</span></div>}
                   </div>
                   <div className="inv-row inv-total">
                     <span>{isCredit ? '↑ CROSCROW Pays Vendor' : '↓ Vendor Pays CROSCROW'}</span>
@@ -3142,6 +3143,12 @@
                     <div className="inv-pay-row">
                       <span style={{color:'#10b981'}}>✓ Penalty Waiver ({s.penalty_waiver_pct}% off)</span>
                       <span style={{fontWeight:700,color:'#10b981'}}>−₹{(s.penalty_waiver_amount).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {(s.rto_credit_total||0)>0 && (
+                    <div className="inv-pay-row">
+                      <span style={{color:'#3b82f6'}}>✓ RTO Partial Payment Credited</span>
+                      <span style={{fontWeight:700,color:'#3b82f6'}}>−₹{(s.rto_credit_total).toFixed(2)}</span>
                     </div>
                   )}
                   <div className="inv-pay-row" style={{borderTop:'2px solid #ddd',fontWeight:700}}>
@@ -7856,14 +7863,19 @@
     const [preview,      setPreview]      = useState(null);
     const [outstandingPen, setOutstandingPen] = useState(null); // { count, amount } — not-yet-invoiced penalties for this vendor
     const [includeOutstanding, setIncludeOutstanding] = useState(false);
+    const [outstandingRto, setOutstandingRto] = useState(null); // { count, amount } — uncredited partial payment on this vendor's RTO orders
+    const [includeRtoCredit, setIncludeRtoCredit] = useState(false);
 
     const penaltyAmt = init.penalty_deduction || 0;
     const outstandingAmt = includeOutstanding ? (outstandingPen?.amount || 0) : 0;
+    const rtoCreditAmt = includeRtoCredit ? (outstandingRto?.amount || 0) : 0;
 
     // Fetch how many outstanding (incl. non-delivered-order) penalties exist for this vendor
     useEffect(()=>{
       fetch(`${API}/admin/settlements/${init.id}/outstanding-penalties`, { headers:{ Authorization:`Bearer ${token}` } })
         .then(r=>r.json()).then(d=>setOutstandingPen(d)).catch(()=>{});
+      fetch(`${API}/admin/settlements/${init.id}/outstanding-rto-credit`, { headers:{ Authorization:`Bearer ${token}` } })
+        .then(r=>r.json()).then(d=>setOutstandingRto(d)).catch(()=>{});
     },[]);
 
     // Live preview (simplified — full recalc happens server-side)
@@ -7878,9 +7890,9 @@
         + (init.extra_advance||0)
         - (init.shipping_adjustment||0)
         + (init.penalty_waiver_amount||0);
-      const adjusted = parseFloat((baseNet + outstandingAmt - disc - adv + ship - waiver).toFixed(2));
+      const adjusted = parseFloat((baseNet + outstandingAmt - disc - adv + ship - waiver - rtoCreditAmt).toFixed(2));
       setPreview({ netPayable: adjusted, waiverAmt: waiver });
-    },[discount, shipping, extraAdv, waiverPct, includeOutstanding, outstandingPen]);
+    },[discount, shipping, extraAdv, waiverPct, includeOutstanding, outstandingPen, includeRtoCredit, outstandingRto]);
 
     const save = async () => {
       setSaving(true); setMsg(null);
@@ -7893,6 +7905,7 @@
           penalty_waiver_pct:  waiverPct,
           include_outstanding_penalties: includeOutstanding,
           bear_cod_discount:   bearCodDisc,
+          include_rto_partial_collected: includeRtoCredit,
         };
         if (commPct.trim()) body.custom_commission_pct = parseFloat(commPct);
         if (ppDisc.trim())  body.prepaid_discount_pct  = parseFloat(ppDisc);
@@ -7904,7 +7917,8 @@
         if (!r.ok) throw new Error(d.error);
         const waiverNote = d.waiverAmount > 0 ? ` · Penalty waiver ₹${d.waiverAmount.toFixed(2)} applied` : '';
         const addedNote  = d.addedPenaltyAmount > 0 ? ` · +₹${d.addedPenaltyAmount.toFixed(2)} outstanding penalties added` : '';
-        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CROSCROW pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}${waiverNote}${addedNote}` });
+        const rtoNote    = d.addedRtoCreditAmount > 0 ? ` · ₹${d.addedRtoCreditAmount.toFixed(2)} RTO partial-payment credited to vendor` : '';
+        setMsg({ type:'success', text:`Saved — New net: ${d.netPayable<0?'CROSCROW pays':'Vendor pays'} ₹${Math.abs(d.netPayable).toFixed(2)}${waiverNote}${addedNote}${rtoNote}` });
         onSaved();
       } catch(e) { setMsg({ type:'error', text: e.message }); }
       setSaving(false);
@@ -7999,6 +8013,23 @@
                     </div>
                     <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
                       Confirmed penalties on this vendor's orders that were never delivered (RTO, dispatch delay, etc.) or otherwise fell outside this invoice's period — folded into the same penalty line above, not shown separately on the invoice.
+                    </div>
+                  </div>
+                </label>
+              </div>
+            )}
+
+            {/* Section: RTO partial-payment credit */}
+            {outstandingRto?.count > 0 && (
+              <div style={{background:'rgba(59,130,246,0.05)',border:'1px solid rgba(59,130,246,0.2)',borderRadius:8,padding:14,marginBottom:16}}>
+                <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer'}}>
+                  <input type="checkbox" checked={includeRtoCredit} onChange={e=>setIncludeRtoCredit(e.target.checked)} style={{marginTop:2}}/>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
+                      Send partial payment collected on {outstandingRto.count} RTO order{outstandingRto.count===1?'':'s'} — <strong style={{color:'var(--cyan)'}}>₹{outstandingRto.amount.toFixed(2)}</strong>
+                    </div>
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
+                      The customer's online advance/partial payment on these orders was collected by CROSCROW, not the vendor — but the vendor still bore the forward + reverse shipping cost when the order came back RTO. Credits that collected amount to the vendor to cover their logistics loss. Each order is credited only once, ever, across all settlements.
                     </div>
                   </div>
                 </label>
