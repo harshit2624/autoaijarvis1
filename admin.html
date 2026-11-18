@@ -8055,39 +8055,39 @@
               </div>
             )}
 
-            {/* Section: Return/exchange fee credit */}
-            {(outstandingFeeAll?.count > 0 || outstandingFeeCompleted?.count > 0) && (
-              <div style={{background:'rgba(168,85,247,0.05)',border:'1px solid rgba(168,85,247,0.2)',borderRadius:8,padding:14,marginBottom:16}}>
-                <div style={{fontSize:12,fontWeight:600,color:'var(--text)',marginBottom:10}}>Return/Exchange Fee Collected</div>
-                {outstandingFeeAll?.count > 0 && (
-                  <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer',marginBottom:10}}>
-                    <input type="checkbox" checked={includeFeeAll} onChange={e=>{ setIncludeFeeAll(e.target.checked); if (e.target.checked) setIncludeFeeCompleted(false); }} style={{marginTop:2}}/>
-                    <div>
-                      <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
-                        Send all fee collected — {outstandingFeeAll.count} request{outstandingFeeAll.count===1?'':'s'}, <strong style={{color:'#a855f7'}}>₹{outstandingFeeAll.amount.toFixed(2)}</strong>
-                      </div>
-                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
-                        Every paid (non-waived) return/exchange fee CROSCROW has collected from customers on this vendor's orders, regardless of request status.
-                      </div>
-                    </div>
-                  </label>
-                )}
-                {outstandingFeeCompleted?.count > 0 && (
-                  <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer'}}>
-                    <input type="checkbox" checked={includeFeeCompleted} onChange={e=>{ setIncludeFeeCompleted(e.target.checked); if (e.target.checked) setIncludeFeeAll(false); }} style={{marginTop:2}}/>
-                    <div>
-                      <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
-                        Send fee collected for completed orders only — {outstandingFeeCompleted.count} request{outstandingFeeCompleted.count===1?'':'s'}, <strong style={{color:'#a855f7'}}>₹{outstandingFeeCompleted.amount.toFixed(2)}</strong>
-                      </div>
-                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
-                        Only the fee on requests that have fully reached "Completed" — not ones still pending, in transit, or under QC.
-                      </div>
-                    </div>
-                  </label>
-                )}
-                <div style={{fontSize:10,color:'var(--text-muted)',marginTop:10}}>Each request's fee is credited only once, ever, across all settlements — picking one option here doesn't double-count requests already covered by the other.</div>
-              </div>
-            )}
+            {/* Section: Return/exchange fee credit — two independent controls,
+                always both shown (even at ₹0/0 requests) so admin can pick
+                either scope for this invoice's period without one hiding
+                the other. */}
+            <div style={{background:'rgba(168,85,247,0.05)',border:'1px solid rgba(168,85,247,0.2)',borderRadius:8,padding:14,marginBottom:16}}>
+              <div style={{fontSize:12,fontWeight:600,color:'var(--text)',marginBottom:10}}>Return/Exchange Fee Collected (this period)</div>
+              <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor: outstandingFeeAll?.count>0 ? 'pointer':'default',marginBottom:10,opacity: outstandingFeeAll?.count>0 ? 1:0.5}}>
+                <input type="checkbox" disabled={!(outstandingFeeAll?.count>0)} checked={includeFeeAll} onChange={e=>setIncludeFeeAll(e.target.checked)} style={{marginTop:2}}/>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
+                    Settle exchange fee collected in period — {outstandingFeeAll?.count||0} request{outstandingFeeAll?.count===1?'':'s'}, <strong style={{color:'#a855f7'}}>₹{(outstandingFeeAll?.amount||0).toFixed(2)}</strong>
+                  </div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
+                    Every paid (non-waived) return/exchange fee CROSCROW collected from customers on requests submitted in this invoice's period, regardless of status.
+                  </div>
+                </div>
+              </label>
+              <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor: outstandingFeeCompleted?.count>0 ? 'pointer':'default',opacity: outstandingFeeCompleted?.count>0 ? 1:0.5}}>
+                <input type="checkbox" disabled={!(outstandingFeeCompleted?.count>0)} checked={includeFeeCompleted} onChange={e=>setIncludeFeeCompleted(e.target.checked)} style={{marginTop:2}}/>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
+                    Settle completed exchange fee in period — {outstandingFeeCompleted?.count||0} request{outstandingFeeCompleted?.count===1?'':'s'}, <strong style={{color:'#a855f7'}}>₹{(outstandingFeeCompleted?.amount||0).toFixed(2)}</strong>
+                  </div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
+                    Only the fee on requests that have fully reached "Completed" in this period — not ones still pending, in transit, or under QC.
+                  </div>
+                </div>
+              </label>
+              {includeFeeAll && includeFeeCompleted && (
+                <div style={{fontSize:10,color:'var(--yellow)',marginTop:10}}>Both checked — "All" already includes completed requests, so only the all-requests amount will be credited (no double-counting).</div>
+              )}
+              <div style={{fontSize:10,color:'var(--text-muted)',marginTop:10}}>Each request's fee is credited only once, ever, across all settlements.</div>
+            </div>
 
             {/* Section: Penalty Waiver */}
             {(penaltyAmt + outstandingAmt) > 0 && (()=>{
