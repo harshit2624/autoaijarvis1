@@ -35863,7 +35863,48 @@ async function startBaileysBot() {
             }
           }
 
-          // ── 4. LLM handles everything else (smart mode only) ─────────
+          // ── 4. Product query from the PDP WhatsApp button — matches the
+          // exact prefilled text cc-mobile-dock.liquid sends ("Hi, can you
+          // tell me more about {product.title}?"). Handled directly here
+          // (bypassing the LLM entirely) with the exact-title lookup, full
+          // description, and discount CTA — regardless of bot mode. This
+          // used to live only inside the menu-mode branch below, so in
+          // smart mode (the default) this exact, reliable format fell
+          // through to the generic LLM flow instead, which could miss the
+          // product and reply with something that reads as "can't help",
+          // triggering a real support ticket instead of answering.
+          const _pdpProductMatch = text.match(/^hi,?\s*can you tell me more about\s+(.+?)\??$/i);
+          if (_pdpProductMatch) {
+            await SC.addMessage(chat._id, { sender: 'customer', text });
+            const _pq = _pdpProductMatch[1].trim();
+            const _pqProducts = await scSearchProductByExactTitle(_pq);
+            if (_pqProducts.length) {
+              await waSendProductImages(sock, sender, _pqProducts, { descriptionOnly: true });
+              const _ctaProduct = _pqProducts.find(p => p.handle);
+              // Skip the discount push for anyone who already has an
+              // order — sending SPECIALQUERY to them risks them
+              // cancelling that order and re-placing it with the code.
+              const _alreadyOrdered = await abandonedCartHasRecentOrder(phone);
+              if (_ctaProduct && _ctaProduct.price_from && !_alreadyOrdered) {
+                const _currentPrice = Math.round(_ctaProduct.price_from);
+                const _specialPrice = Math.round(_currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
+                const _discountUrl = waProductInquiryDiscountUrl(_ctaProduct.url);
+                await sock.sendMessage(sender, {
+                  text: `Price: Rs. ${_currentPrice}\nYour price: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`,
+                  ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
+                }).catch(() => {});
+              }
+            } else {
+              await sock.sendMessage(sender, { text: `Couldn't find that exact product right now — here's our full range: ${STOREFRONT_URL}` });
+            }
+            await SC.addMessage(chat._id, { sender: 'assistant', text: `[product_query reply for "${_pq}"]` }).catch(() => {});
+            await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $addToSet: { tags: 'Product Inquiry' } }).catch(() => {});
+            await waSessionClear(sender).catch(() => {});
+            waPending.delete(sender);
+            continue;
+          }
+
+          // ── 4b. LLM handles everything else (smart mode only) ────────
           // In menu mode, skip AI — show the menu again instead
           const _botMode = await getBotMode();
           if (_botMode === 'menu') {
@@ -35877,41 +35918,6 @@ async function startBaileysBot() {
               const _inferredNum = waClassifyMenuIntent(text);
               if (_inferredNum) {
                 await waHandleMenuReply(sock, sender, chat, phone, _inferredNum, { menu: 'welcome_menu', orderData: _menuSession.orderData });
-                waPending.delete(sender);
-                continue;
-              }
-              // Product query from the PDP WhatsApp button — matches the
-              // exact prefilled text cc-mobile-dock.liquid sends ("Hi, can
-              // you tell me more about {product.title}?"). Handled directly
-              // here (bypassing the LLM) so it works in menu mode without
-              // needing WA_MENU_LLM_FALLBACK on for every unrecognized
-              // message — scoped to just this one known, reliable trigger.
-              const _pdpProductMatch = text.match(/^hi,?\s*can you tell me more about\s+(.+?)\??$/i);
-              if (_pdpProductMatch) {
-                const _pq = _pdpProductMatch[1].trim();
-                const _pqProducts = await scSearchProductByExactTitle(_pq);
-                if (_pqProducts.length) {
-                  await waSendProductImages(sock, sender, _pqProducts, { descriptionOnly: true });
-                  const _ctaProduct = _pqProducts.find(p => p.handle);
-                  // Skip the discount push for anyone who already has an
-                  // order — sending SPECIALQUERY to them risks them
-                  // cancelling that order and re-placing it with the code.
-                  const _alreadyOrdered = await abandonedCartHasRecentOrder(phone);
-                  if (_ctaProduct && _ctaProduct.price_from && !_alreadyOrdered) {
-                    const _currentPrice = Math.round(_ctaProduct.price_from);
-                    const _specialPrice = Math.round(_currentPrice * (1 - PRODUCT_INQUIRY_DISCOUNT_PCT / 100));
-                    const _discountUrl = waProductInquiryDiscountUrl(_ctaProduct.url);
-                    await sock.sendMessage(sender, {
-                      text: `Price: Rs. ${_currentPrice}\nYour price: Rs. ${_specialPrice} (${PRODUCT_INQUIRY_DISCOUNT_PCT}% off)\n\nCode = *${PRODUCT_INQUIRY_DISCOUNT_CODE}*\n\n${PRODUCT_INQUIRY_EXTRA_OFFERS}\n\nUse the button below to avail the discount.`,
-                      ctaUrl: { displayText: 'Get Special Discount', url: _discountUrl },
-                    }).catch(() => {});
-                  }
-                } else {
-                  await sock.sendMessage(sender, { text: `Couldn't find that exact product right now — here's our full range: ${STOREFRONT_URL}` });
-                }
-                await SC.addMessage(chat._id, { sender: 'assistant', text: `[product_query reply for "${_pq}"]` }).catch(() => {});
-                await mdb.collection('support_chats').updateOne({ _id: chat._id }, { $addToSet: { tags: 'Product Inquiry' } }).catch(() => {});
-                await waSessionClear(sender).catch(() => {});
                 waPending.delete(sender);
                 continue;
               }
