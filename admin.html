@@ -5796,6 +5796,21 @@
       return nonStageFiltered.filter(o=>orderMatchesStage(o,stage));
     },[nonStageFiltered,stage]);
 
+    // Revenue to attribute to an order for the summary/trend rollups below.
+    // A multi-vendor order correctly STAYS in the vendor-filtered set (the
+    // filtered vendor really is part of it), but its full o.orderValue is
+    // the order's grand total across every vendor on it — crediting that
+    // whole amount to one vendor overstates their revenue/AOV whenever
+    // they share an order with others. o.vendorCommissions already carries
+    // each vendor's own line-item revenue (same split used for commission
+    // calc), so when a vendor filter is active, use that vendor's own
+    // share instead of the order total. No vendor filter → order total,
+    // same as before.
+    const amountFor = useCallback((o) => {
+      if (filterVendor === 'all') return o.orderValue || 0;
+      return (o.vendorCommissions || []).find(vc => vc.vendor === filterVendor)?.revenue ?? 0;
+    }, [filterVendor]);
+
     // Full stage breakdown for the header summary box — computed from
     // nonStageFiltered (period/vendor/payment/campaign/tags applied, stage
     // pill NOT applied) so it stays a stable "whole picture" reference no
@@ -5809,7 +5824,7 @@
       let totalCount=0, totalAmount=0, dispatchedCount=0, dispatchedAmount=0;
       nonStageFiltered.forEach(o=>{
         const st = o.stage || 'new';
-        const val = o.orderValue||0;
+        const val = amountFor(o);
         if(!buckets[st]) buckets[st] = {count:0, amount:0};
         buckets[st].count++; buckets[st].amount += val;
         totalCount++; totalAmount += val;
@@ -5832,7 +5847,7 @@
         ready: get('ready'), pickup: get('pickup'), ofd: get('ofd'),
         hold: get('hold'), misc: get('misc'), returned: get('returned'),
       };
-    },[nonStageFiltered]);
+    },[nonStageFiltered,amountFor]);
 
     // Daily (or weekly, once the active range spans too many days to plot
     // one point per day legibly) trend buckets — built from the same
@@ -5854,7 +5869,7 @@
         if(!buckets.has(k)) buckets.set(k,{ t:k, revenue:0, count:0,
           cancelled:{c:0,a:0}, dispatched:{c:0,a:0}, delivered:{c:0,a:0}, rto:{c:0,a:0} });
         const b = buckets.get(k);
-        const val = o.orderValue||0;
+        const val = amountFor(o);
         const st = o.stage||'new';
         b.revenue += val; b.count++;
         if(st==='cancelled'){ b.cancelled.c++; b.cancelled.a+=val; }
@@ -5863,7 +5878,7 @@
         if(DISPATCHED_STAGES.includes(st)){ b.dispatched.c++; b.dispatched.a+=val; }
       });
       return { points:[...buckets.values()].sort((a,b)=>a.t-b.t), granularity };
-    },[nonStageFiltered]);
+    },[nonStageFiltered,amountFor]);
 
     const pages = Math.max(1,Math.ceil(filtered.length/PER));
     const cur   = Math.min(page,pages);
