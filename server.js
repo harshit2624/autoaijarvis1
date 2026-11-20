@@ -8170,6 +8170,15 @@ app.get("/admin/vendor-stats", adminAuth, async (req, res) => {
           cancelled: d.cancelled,
           cancellationRate: orderCount > 0 ? Math.round(d.cancelled / orderCount * 100) : 0,
           rtoRate: d.dispatched > 0 ? Math.round(d.rto / d.dispatched * 100) : 0,
+          // Delivered as % of dispatched (the real completion rate — "of
+          // what actually shipped, how much landed") and % of all orders
+          // in the period (the headline number including stuff that never
+          // even dispatched) — both needed since "dispatched" already
+          // includes delivered+RTO+in-transit, so showing raw counts side
+          // by side reads like four exclusive buckets when it's really a
+          // superset breakdown.
+          deliveredRateDispatched: d.dispatched > 0 ? Math.round(d.delivered / d.dispatched * 100) : 0,
+          deliveredRateTotal: orderCount > 0 ? Math.round(d.delivered / orderCount * 100) : 0,
           prepaid: d.prepaid,
           cod: d.cod,
           prepaidPct: orderCount > 0 ? Math.round(d.prepaid / orderCount * 100) : 0,
