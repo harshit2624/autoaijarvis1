@@ -14769,6 +14769,50 @@ function logVendorSync(vendorName, shop, event, status, details = {}) {
   }).catch(() => {});
 }
 
+// ── Bulk price-change alert ──────────────────────────────────────────────
+// A vendor editing one or two prices is routine. A vendor pushing a
+// sweeping markdown/markup across many products in a short window (a
+// Black Friday sale sweep, or an accidental bulk mistake) is worth an
+// admin heads-up either way. Counts DISTINCT products with a logged price
+// change in the last PRICE_ALERT_WINDOW_MS for this vendor; once over
+// PRICE_ALERT_THRESHOLD, emails admin — throttled so it fires once per
+// window per vendor instead of once per product after the 5th.
+const PRICE_ALERT_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours = "short duration"
+const PRICE_ALERT_THRESHOLD = 5;
+async function checkBulkPriceChangeAlert(vendorName) {
+  const throttleKey = `priceAlert_${vendorName}`;
+  if (Date.now() - (global[throttleKey] || 0) < PRICE_ALERT_WINDOW_MS) return; // already alerted this window
+  const since = new Date(Date.now() - PRICE_ALERT_WINDOW_MS).toISOString();
+  const recent = await mdb.collection('price_history').find(
+    { vendor_name: vendorName, changed_at: { $gte: since } },
+    { projection: { croscrow_variant_id: 1, product_title: 1, old_price: 1, new_price: 1, direction: 1, _id: 0 } }
+  ).toArray();
+  const distinctProducts = new Map(); // product_title -> latest change, dedup by variant
+  const seenVariants = new Set();
+  for (const r of recent) {
+    if (seenVariants.has(r.croscrow_variant_id)) continue;
+    seenVariants.add(r.croscrow_variant_id);
+    distinctProducts.set(r.croscrow_variant_id, r);
+  }
+  if (distinctProducts.size < PRICE_ALERT_THRESHOLD) return;
+  global[throttleKey] = Date.now();
+
+  const rows = [...distinctProducts.values()];
+  const increases = rows.filter(r => r.direction === 'increase').length;
+  const decreases = rows.filter(r => r.direction === 'decrease').length;
+  try {
+    const cfg = await getSmtpConfig();
+    if (!cfg?.adminEmail) return;
+    const listRows = rows.slice(0, 20).map(r => `<tr><td style="padding:6px 10px;border-bottom:1px solid #eee;">${r.product_title}</td><td style="padding:6px 10px;border-bottom:1px solid #eee;color:${r.direction==='decrease'?'#10b981':'#ef4444'};">${r.direction==='decrease'?'↓':'↑'} ₹${r.old_price} → ₹${r.new_price}</td></tr>`).join('');
+    const html = emailBase('Bulk Price Change Detected', '#f59e0b', `
+      <div class="subtitle"><strong>${vendorName}</strong> has changed prices on <strong>${distinctProducts.size} products</strong> in the last ${Math.round(PRICE_ALERT_WINDOW_MS/3600000)} hours (${decreases} decreased, ${increases} increased).</div>
+      <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:12px;">${listRows}</table>
+      ${rows.length > 20 ? `<p style="font-size:11px;color:#6b7280;">+ ${rows.length - 20} more</p>` : ''}
+    `);
+    await sendEmail({ to: cfg.adminEmail, subject: `⚠️ ${vendorName} changed ${distinctProducts.size} product prices in the last ${Math.round(PRICE_ALERT_WINDOW_MS/3600000)}h`, html });
+  } catch (e) { console.error('checkBulkPriceChangeAlert email error:', e.message); }
+}
+
 // Register webhooks on vendor's store after install
 async function registerShopifyAppWebhooks(shop, accessToken) {
   const baseUrl = SERVER_URL;
@@ -14820,13 +14864,36 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
       });
       if (!mapping?.croscrow_variant_id) continue;
 
-      // Sync price (skip if sync_price disabled)
+      // Sync price (skip if sync_price disabled) — fetch the CC variant's
+      // CURRENT price first so a real change can be logged to
+      // price_history (old vs new, direction, timestamp). Previously
+      // nothing recorded price changes at all, so there was no way to
+      // tell who'd been raising/dropping prices or catch a vendor
+      // sweeping a bulk markdown (e.g. a Black Friday price drop).
       if (mapping.sync_price !== false) {
+        const ccVarBefore = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json?fields=price`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json()).catch(() => null);
+        const oldPrice = parseFloat(ccVarBefore?.variant?.price);
+        const newPrice = parseFloat(vVariant.price);
         await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json`, {
           method: 'PUT',
           headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
           body: JSON.stringify({ variant: { id: mapping.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
         });
+        if (Number.isFinite(oldPrice) && Number.isFinite(newPrice) && oldPrice !== newPrice) {
+          await mdb.collection('price_history').insertOne({
+            vendor_name: conn.vendor_name,
+            vendor_variant_id: String(vVariant.id),
+            croscrow_variant_id: String(mapping.croscrow_variant_id),
+            product_title: product.title || '',
+            variant_title: vVariant.title || '',
+            old_price: oldPrice,
+            new_price: newPrice,
+            direction: newPrice > oldPrice ? 'increase' : 'decrease',
+            pct_change: parseFloat((((newPrice - oldPrice) / oldPrice) * 100).toFixed(1)),
+            changed_at: new Date().toISOString(),
+          }).catch(() => {});
+          checkBulkPriceChangeAlert(conn.vendor_name).catch(() => {});
+        }
       }
 
       // Sync inventory
