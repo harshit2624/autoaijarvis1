@@ -15827,83 +15827,109 @@ app.get("/admin/vendor-sync/vendor-product-variants", adminAuth, async (req, res
 // what's actually live on CROSCROW, for every mapping that has price sync
 // on. Skips mappings where sync_price has been explicitly turned off
 // (those are expected to differ — that's what the toggle is for).
-app.get("/admin/vendor-sync/price-audit", adminAuth, async (req, res) => {
-  try {
-    const ccToken = await getAccessToken();
+// Runs as a background job (not inline in the request) because looping
+// every vendor's full catalog sequentially can take several minutes —
+// long enough that Render's gateway resets an inline HTTP request before
+// it finishes. Poll /admin/vendor-sync/price-audit/result for status.
+let priceAuditState = { status: 'idle' };
 
-    // Build CC variant map once: croscrow_variant_id -> {price, compare_at_price}
-    const ccVariantMap = {};
-    let ccUrl = `https://${SHOP}.myshopify.com/admin/api/2025-01/products.json?limit=250&fields=id,variants`;
-    while (ccUrl) {
-      const r = await fetch(ccUrl, { headers: { 'X-Shopify-Access-Token': ccToken } });
-      if (!r.ok) break;
-      const data = await r.json();
-      for (const p of (data.products || [])) {
-        for (const v of (p.variants || [])) {
-          ccVariantMap[String(v.id)] = {
-            price: v.price != null ? parseFloat(v.price) : null,
-            compare_at_price: v.compare_at_price != null ? parseFloat(v.compare_at_price) : null,
-          };
-        }
-      }
-      const link = r.headers.get('link') || r.headers.get('Link') || '';
-      const match = link.match(/<([^>]+)>;\s*rel="next"/);
-      ccUrl = match ? match[1] : null;
-    }
+app.post("/admin/vendor-sync/price-audit/start", adminAuth, async (req, res) => {
+  if (priceAuditState.status === 'running') return res.json({ started: false, reason: 'already running' });
+  priceAuditState = { status: 'running', started_at: new Date().toISOString() };
+  res.json({ started: true });
 
-    const allMappings = await VPM.all();
-    const byVendor = {};
-    allMappings.forEach(m => { (byVendor[m.vendor_name] = byVendor[m.vendor_name] || []).push(m); });
+  (async () => {
+    try {
+      const ccToken = await getAccessToken();
 
-    const mismatches = [];
-    let checked = 0, skipped_sync_off = 0, vendor_errors = [];
-
-    for (const [vName, vMappings] of Object.entries(byVendor)) {
-      const conn = await VSC.get(vName);
-      if (!conn) continue;
-
-      let vendorVariantMap = {};
-      try {
-        const vProducts = await vendorShopifyRESTPaginated(conn, '/products.json?limit=250&fields=id,variants', 'products');
-        for (const p of vProducts) {
+      const ccVariantMap = {};
+      let ccUrl = `https://${SHOP}.myshopify.com/admin/api/2025-01/products.json?limit=250&fields=id,variants`;
+      while (ccUrl) {
+        const r = await fetch(ccUrl, { headers: { 'X-Shopify-Access-Token': ccToken } });
+        if (!r.ok) break;
+        const data = await r.json();
+        for (const p of (data.products || [])) {
           for (const v of (p.variants || [])) {
-            vendorVariantMap[String(v.id)] = {
+            ccVariantMap[String(v.id)] = {
               price: v.price != null ? parseFloat(v.price) : null,
               compare_at_price: v.compare_at_price != null ? parseFloat(v.compare_at_price) : null,
             };
           }
         }
-      } catch (e) { vendor_errors.push(`${vName}: ${e.message}`); continue; }
-
-      for (const m of vMappings) {
-        if (m.sync_price === false) { skipped_sync_off++; continue; }
-        const vd = vendorVariantMap[String(m.vendor_variant_id)];
-        const cd = ccVariantMap[String(m.croscrow_variant_id)];
-        if (!vd || !cd) continue;
-        checked++;
-
-        const priceMismatch = vd.price !== null && cd.price !== null && vd.price !== cd.price;
-        const compareAtMismatch = vd.compare_at_price !== cd.compare_at_price;
-
-        if (priceMismatch || compareAtMismatch) {
-          mismatches.push({
-            vendor_name: vName,
-            product_title: m.vendor_product_title,
-            variant_title: m.vendor_variant_title,
-            vendor_price: vd.price,
-            cc_price: cd.price,
-            vendor_compare_at: vd.compare_at_price,
-            cc_compare_at: cd.compare_at_price,
-            price_mismatch: priceMismatch,
-            compare_at_mismatch: compareAtMismatch,
-            croscrow_variant_id: m.croscrow_variant_id,
-          });
-        }
+        const link = r.headers.get('link') || r.headers.get('Link') || '';
+        const match = link.match(/<([^>]+)>;\s*rel="next"/);
+        ccUrl = match ? match[1] : null;
       }
-    }
 
-    res.json({ checked, skipped_sync_off, mismatch_count: mismatches.length, mismatches, vendor_errors });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+      const allMappings = await VPM.all();
+      const byVendor = {};
+      allMappings.forEach(m => { (byVendor[m.vendor_name] = byVendor[m.vendor_name] || []).push(m); });
+
+      const mismatches = [];
+      let checked = 0, skipped_sync_off = 0, vendor_errors = [];
+      const vendorNames = Object.keys(byVendor);
+      let vendorsDone = 0;
+
+      for (const vName of vendorNames) {
+        const vMappings = byVendor[vName];
+        priceAuditState.progress = `${vendorsDone}/${vendorNames.length} vendors (${vName})`;
+        const conn = await VSC.get(vName);
+        if (!conn) { vendorsDone++; continue; }
+
+        let vendorVariantMap = {};
+        try {
+          const vProducts = await vendorShopifyRESTPaginated(conn, '/products.json?limit=250&fields=id,variants', 'products');
+          for (const p of vProducts) {
+            for (const v of (p.variants || [])) {
+              vendorVariantMap[String(v.id)] = {
+                price: v.price != null ? parseFloat(v.price) : null,
+                compare_at_price: v.compare_at_price != null ? parseFloat(v.compare_at_price) : null,
+              };
+            }
+          }
+        } catch (e) { vendor_errors.push(`${vName}: ${e.message}`); vendorsDone++; continue; }
+
+        for (const m of vMappings) {
+          if (m.sync_price === false) { skipped_sync_off++; continue; }
+          const vd = vendorVariantMap[String(m.vendor_variant_id)];
+          const cd = ccVariantMap[String(m.croscrow_variant_id)];
+          if (!vd || !cd) continue;
+          checked++;
+
+          const priceMismatch = vd.price !== null && cd.price !== null && vd.price !== cd.price;
+          const compareAtMismatch = vd.compare_at_price !== cd.compare_at_price;
+
+          if (priceMismatch || compareAtMismatch) {
+            mismatches.push({
+              vendor_name: vName,
+              product_title: m.vendor_product_title,
+              variant_title: m.vendor_variant_title,
+              vendor_price: vd.price,
+              cc_price: cd.price,
+              vendor_compare_at: vd.compare_at_price,
+              cc_compare_at: cd.compare_at_price,
+              price_mismatch: priceMismatch,
+              compare_at_mismatch: compareAtMismatch,
+              croscrow_variant_id: m.croscrow_variant_id,
+            });
+          }
+        }
+        vendorsDone++;
+      }
+
+      priceAuditState = {
+        status: 'done',
+        finished_at: new Date().toISOString(),
+        checked, skipped_sync_off, mismatch_count: mismatches.length, mismatches, vendor_errors,
+      };
+    } catch (e) {
+      priceAuditState = { status: 'error', error: e.message };
+    }
+  })();
+});
+
+app.get("/admin/vendor-sync/price-audit/result", adminAuth, async (req, res) => {
+  res.json(priceAuditState);
 });
 
 app.get("/admin/vendor-sync/croscrow-products", adminAuth, async (req, res) => {
