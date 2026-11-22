@@ -15932,27 +15932,51 @@ app.get("/admin/vendor-sync/price-audit/result", adminAuth, async (req, res) => 
   res.json(priceAuditState);
 });
 
+// NOTE: REST's /products.json?title= does an EXACT title match, not a
+// substring/contains search — confirmed broken when searching "Clasp" for
+// a product actually named "Frost Clasp Hoodie  Black" (0 results, despite
+// the product existing). Switched to GraphQL's title:*term* wildcard query,
+// which does real substring matching, same as the storefront's own search.
+function gidToNumeric(gid) {
+  if (!gid) return null;
+  const m = String(gid).match(/(\d+)$/);
+  return m ? m[1] : null;
+}
+
 app.get("/admin/vendor-sync/croscrow-products", adminAuth, async (req, res) => {
   const { q } = req.query;
   try {
-    const fields = 'id,title,variants,images,status';
-    let products = [];
-    if (q && q.trim()) {
-      // Search by title (more reliable than ?q= which is full-text)
-      const byTitle = await shopifyREST(`/products.json?title=${encodeURIComponent(q.trim())}&limit=20&fields=${fields}`);
-      products = byTitle.products || [];
-      // If few results, also try vendor search and merge
-      if (products.length < 5) {
-        try {
-          const byVendor = await shopifyREST(`/products.json?vendor=${encodeURIComponent(q.trim())}&limit=10&fields=${fields}`);
-          const seen = new Set(products.map(p => p.id));
-          (byVendor.products || []).forEach(p => { if (!seen.has(p.id)) { products.push(p); seen.add(p.id); } });
-        } catch {}
+    const term = (q || '').trim();
+    const searchQuery = term ? `title:*${term.replace(/"/g, '\\"')}*` : '';
+    const data = await shopifyGraphQL(`
+      query($first: Int!, $query: String) {
+        products(first: $first, query: $query) {
+          nodes {
+            id
+            title
+            status
+            images(first: 1) { nodes { url } }
+            variants(first: 100) {
+              nodes { id title price compareAtPrice }
+            }
+          }
+        }
       }
-    } else {
-      const data = await shopifyREST(`/products.json?limit=20&fields=${fields}`);
-      products = data.products || [];
-    }
+    `, { first: 25, query: searchQuery || null });
+
+    const products = (data.products?.nodes || []).map(p => ({
+      id: gidToNumeric(p.id),
+      title: p.title,
+      status: (p.status || '').toLowerCase(),
+      images: (p.images?.nodes || []).map(img => ({ src: img.url })),
+      variants: (p.variants?.nodes || []).map(v => ({
+        id: gidToNumeric(v.id),
+        title: v.title,
+        price: v.price,
+        compare_at_price: v.compareAtPrice,
+      })),
+    }));
+
     res.json({ products });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

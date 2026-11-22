@@ -11128,8 +11128,12 @@
     };
 
     useEffect(()=>{ if (ccSearch.length > 1) { const t = setTimeout(()=>searchCcProducts(ccSearch), 400); return ()=>clearTimeout(t); } }, [ccSearch]);
-    useEffect(()=>{ if (mapModal) { setCcSearch(''); setCcProducts([]); searchCcProducts(''); } }, [mapModal]);
-    useEffect(()=>{ if (smartMap?.step==='search_cc') { setCcSearch(''); setCcProducts([]); searchCcProducts(''); } }, [smartMap?.step]);
+    // Prefill with the vendor product's own title and search immediately —
+    // the exact-match product usually appears right away this way instead
+    // of starting from an empty box/default listing the user has to search
+    // out of manually.
+    useEffect(()=>{ if (mapModal) { const t = mapModal.vendorProduct?.title || ''; setCcSearch(t); setCcProducts([]); searchCcProducts(t); } }, [mapModal]);
+    useEffect(()=>{ if (smartMap?.step==='search_cc') { const t = smartMap.req?.product_title || ''; setCcSearch(t); setCcProducts([]); searchCcProducts(t); } }, [smartMap?.step]);
 
     const saveMapping = async (ccProduct, ccVariant) => {
       if (!mapModal) return;
