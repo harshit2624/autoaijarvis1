@@ -6095,20 +6095,18 @@
             default so the orders table isn't crowded; one button opens
             both, and opening closes any other open panel (tag dropdown)
             to keep things neat. ── */}
-        {!isMobile && (
-          <button onClick={()=>{ setStatsOpen(v=>!v); setShowTagDrop(false); }}
-            style={{display:'flex',alignItems:'center',gap:6,fontSize:11,fontWeight:700,color:statsOpen?'var(--indigo)':'var(--text-muted)',
-              background:statsOpen?'rgba(99,102,241,0.08)':'var(--bg-card2)',border:`1px solid ${statsOpen?'var(--indigo)':'var(--border)'}`,
-              borderRadius:8,padding:'7px 12px',marginBottom:10,cursor:'pointer',fontFamily:'var(--font-family)'}}>
-            <span style={{display:'inline-block',transition:'transform .15s',transform:statsOpen?'rotate(90deg)':'rotate(0deg)'}}>▸</span>
-            📊 {statsOpen?'Hide':'Show'} stats &amp; trend
-          </button>
-        )}
+        <button onClick={()=>{ setStatsOpen(v=>!v); setShowTagDrop(false); }}
+          style={{display:'flex',alignItems:'center',gap:6,fontSize:11,fontWeight:700,color:statsOpen?'var(--indigo)':'var(--text-muted)',
+            background:statsOpen?'rgba(99,102,241,0.08)':'var(--bg-card2)',border:`1px solid ${statsOpen?'var(--indigo)':'var(--border)'}`,
+            borderRadius:8,padding:'7px 12px',marginBottom:10,cursor:'pointer',fontFamily:'var(--font-family)'}}>
+          <span style={{display:'inline-block',transition:'transform .15s',transform:statsOpen?'rotate(90deg)':'rotate(0deg)'}}>▸</span>
+          📊 {statsOpen?'Hide':'Show'} stats &amp; trend
+        </button>
 
         {/* ── Order Summary — full stage breakdown of whatever
             period/vendor/payment/campaign/tags filters are active, stays
             stable regardless of which stage pill is highlighted below. ── */}
-        {!isMobile && statsOpen && (
+        {statsOpen && (
           <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:14}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:10,flexWrap:'wrap',gap:8}}>
               <div style={{display:'flex',alignItems:'baseline',gap:10}}>
@@ -6152,7 +6150,7 @@
         {/* ── Trend chart — same nonStageFiltered universe as the summary
             box above, so it moves with period/vendor/payment/campaign
             filters but ignores the stage pill. ── */}
-        {!isMobile && statsOpen && (
+        {statsOpen && (
           <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:14}}>
             <div style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:10}}>📈 Trend</div>
             <TrendChart points={trendData.points} granularity={trendData.granularity}
