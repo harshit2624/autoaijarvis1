@@ -21558,6 +21558,86 @@ app.post("/admin/brand-rank/run-now", requirePermission('settings'), async (req,
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Admin: add every currently-discounted product from one collection into
+// another (e.g. sweep Winters 003's on-sale items into the Sale collection).
+// "Discounted" means at least one variant has compare_at_price > price.
+app.post("/admin/collections/add-discounted", adminAuth, async (req, res) => {
+  const { from_handle, to_handle } = req.body || {};
+  if (!from_handle || !to_handle) return res.status(400).json({ error: 'from_handle and to_handle required' });
+  try {
+    const source = (await shopifyGraphQL(
+      `query($h: String!, $cursor: String) {
+        collectionByHandle(handle: $h) {
+          id
+          title
+          products(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            edges { node { id title variants(first: 100) { edges { node { price compareAtPrice } } } } }
+          }
+        }
+      }`,
+      { h: from_handle, cursor: null }
+    )).collectionByHandle;
+    if (!source) return res.status(404).json({ error: `Collection "${from_handle}" not found` });
+
+    // Paginate through all products in the source collection
+    let allProducts = [...source.products.edges.map(e => e.node)];
+    let hasNext = source.products.pageInfo.hasNextPage;
+    let cursor = source.products.pageInfo.endCursor;
+    while (hasNext) {
+      const page = (await shopifyGraphQL(
+        `query($h: String!, $cursor: String) {
+          collectionByHandle(handle: $h) {
+            products(first: 100, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              edges { node { id title variants(first: 100) { edges { node { price compareAtPrice } } } } }
+            }
+          }
+        }`,
+        { h: from_handle, cursor }
+      )).collectionByHandle.products;
+      allProducts.push(...page.edges.map(e => e.node));
+      hasNext = page.pageInfo.hasNextPage;
+      cursor = page.pageInfo.endCursor;
+    }
+
+    const discounted = allProducts.filter(p =>
+      p.variants.edges.some(v => {
+        const price = parseFloat(v.node.price);
+        const cap = v.node.compareAtPrice != null ? parseFloat(v.node.compareAtPrice) : null;
+        return cap != null && cap > price;
+      })
+    );
+
+    if (!discounted.length) return res.json({ added: [], count: 0, message: `No discounted products found in "${from_handle}"` });
+
+    const target = (await shopifyGraphQL(
+      `query($h: String!) { collectionByHandle(handle: $h) { id } }`,
+      { h: to_handle }
+    )).collectionByHandle;
+    if (!target) return res.status(404).json({ error: `Collection "${to_handle}" not found` });
+
+    const result = await shopifyGraphQL(
+      `mutation($id: ID!, $productIds: [ID!]!) {
+        collectionAddProducts(id: $id, productIds: $productIds) {
+          collection { id title }
+          userErrors { field message }
+        }
+      }`,
+      { id: target.id, productIds: discounted.map(p => p.id) }
+    );
+
+    const userErrors = result.collectionAddProducts?.userErrors || [];
+    res.json({
+      added: discounted.map(p => p.title),
+      count: discounted.length,
+      from: source.title,
+      to: target.id,
+      userErrors,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Keep "WINTERS 003" products pinned to the top of "All", in the same
 // manual order they're sorted in over there — re-synced on a schedule so it
 // never needs to be dragged by hand, even as Winters' lineup/order changes.
