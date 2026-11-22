@@ -14860,7 +14860,6 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
       const mapping = await mdb.collection('vendor_product_mappings').findOne({
         vendor_name: conn.vendor_name,
         vendor_variant_id: String(vVariant.id),
-        sync_inventory: 1,
       });
       if (!mapping?.croscrow_variant_id) continue;
 
@@ -14896,16 +14895,18 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
         }
       }
 
-      // Sync inventory
-      const qty = parseInt(vVariant.inventory_quantity ?? 0);
-      const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json?fields=inventory_item_id`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json());
-      const ccInvItemId = ccVarData.variant?.inventory_item_id;
-      if (ccInvItemId && ccLocationId) {
-        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
-          method: 'POST',
-          headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
-        });
+      // Sync inventory (skip if sync_inventory disabled on this mapping)
+      if (mapping.sync_inventory) {
+        const qty = parseInt(vVariant.inventory_quantity ?? 0);
+        const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json?fields=inventory_item_id`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json());
+        const ccInvItemId = ccVarData.variant?.inventory_item_id;
+        if (ccInvItemId && ccLocationId) {
+          await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
+            method: 'POST',
+            headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
+          });
+        }
       }
 
       // Backfill vendor_inventory_item_id
@@ -15579,7 +15580,7 @@ async function syncVendorImageToCCProduct({ ccToken, croscrow_product_id, vendor
 app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
   const { vendor_name, vendor_product_id } = req.body || {};
   const allMappings = await VPM.all(vendor_name);
-  const mappings = allMappings.filter(m => m.sync_inventory && (!vendor_product_id || String(m.vendor_product_id) === String(vendor_product_id)));
+  const mappings = allMappings.filter(m => (m.sync_inventory || m.sync_price !== false) && (!vendor_product_id || String(m.vendor_product_id) === String(vendor_product_id)));
 
   let synced = 0, errors = [];
   const byVendor = {};
@@ -15619,9 +15620,9 @@ app.post("/admin/vendor-sync/sync-inventory", adminAuth, async (req, res) => {
             });
           }
 
-          // Sync inventory only if vendor tracks it
+          // Sync inventory only if this mapping has inventory sync enabled and vendor tracks it
           const invItemId = vVariant.inventory_item_id;
-          if (invItemId && vVariant.inventory_management === 'shopify') {
+          if (m.sync_inventory && invItemId && vVariant.inventory_management === 'shopify') {
             const qty = parseInt(vVariant.inventory_quantity ?? 0);
 
             // Enable inventory tracking on CROSCROW variant first
