@@ -14870,28 +14870,38 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
       // tell who'd been raising/dropping prices or catch a vendor
       // sweeping a bulk markdown (e.g. a Black Friday price drop).
       if (mapping.sync_price !== false) {
-        const ccVarBefore = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json?fields=price`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json()).catch(() => null);
+        const ccVarBefore = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json?fields=price,compare_at_price`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json()).catch(() => null);
         const oldPrice = parseFloat(ccVarBefore?.variant?.price);
         const newPrice = parseFloat(vVariant.price);
+        const oldComparePrice = ccVarBefore?.variant?.compare_at_price != null ? parseFloat(ccVarBefore.variant.compare_at_price) : null;
+        const newComparePrice = vVariant.compare_at_price != null ? parseFloat(vVariant.compare_at_price) : null;
         await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json`, {
           method: 'PUT',
           headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
           body: JSON.stringify({ variant: { id: mapping.croscrow_variant_id, price: vVariant.price, compare_at_price: vVariant.compare_at_price || null } }),
         });
-        if (Number.isFinite(oldPrice) && Number.isFinite(newPrice) && oldPrice !== newPrice) {
+        const priceChanged = Number.isFinite(oldPrice) && Number.isFinite(newPrice) && oldPrice !== newPrice;
+        const comparePriceChanged = oldComparePrice !== newComparePrice;
+        if (priceChanged || comparePriceChanged) {
           await mdb.collection('price_history').insertOne({
             vendor_name: conn.vendor_name,
             vendor_variant_id: String(vVariant.id),
             croscrow_variant_id: String(mapping.croscrow_variant_id),
             product_title: product.title || '',
             variant_title: vVariant.title || '',
-            old_price: oldPrice,
-            new_price: newPrice,
-            direction: newPrice > oldPrice ? 'increase' : 'decrease',
-            pct_change: parseFloat((((newPrice - oldPrice) / oldPrice) * 100).toFixed(1)),
+            old_price: Number.isFinite(oldPrice) ? oldPrice : null,
+            new_price: Number.isFinite(newPrice) ? newPrice : null,
+            direction: priceChanged ? (newPrice > oldPrice ? 'increase' : 'decrease') : null,
+            pct_change: priceChanged ? parseFloat((((newPrice - oldPrice) / oldPrice) * 100).toFixed(1)) : null,
+            old_compare_at_price: oldComparePrice,
+            new_compare_at_price: newComparePrice,
+            compare_at_direction: comparePriceChanged
+              ? (oldComparePrice == null ? 'added' : newComparePrice == null ? 'removed' : (newComparePrice > oldComparePrice ? 'increase' : 'decrease'))
+              : null,
+            compare_at_pct_change: (comparePriceChanged && oldComparePrice) ? parseFloat((((newComparePrice - oldComparePrice) / oldComparePrice) * 100).toFixed(1)) : null,
             changed_at: new Date().toISOString(),
           }).catch(() => {});
-          checkBulkPriceChangeAlert(conn.vendor_name).catch(() => {});
+          if (priceChanged) checkBulkPriceChangeAlert(conn.vendor_name).catch(() => {});
         }
       }
 
@@ -15811,6 +15821,89 @@ app.get("/admin/vendor-sync/vendor-product-variants", adminAuth, async (req, res
     const product = data.product || {};
     res.json({ variants: (product.variants || []).map(v => ({ id: v.id, title: v.title, price: v.price, sku: v.sku })) });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Admin: cross-check every vendor's live price/compare_at_price against
+// what's actually live on CROSCROW, for every mapping that has price sync
+// on. Skips mappings where sync_price has been explicitly turned off
+// (those are expected to differ — that's what the toggle is for).
+app.get("/admin/vendor-sync/price-audit", adminAuth, async (req, res) => {
+  try {
+    const ccToken = await getAccessToken();
+
+    // Build CC variant map once: croscrow_variant_id -> {price, compare_at_price}
+    const ccVariantMap = {};
+    let ccUrl = `https://${SHOP}.myshopify.com/admin/api/2025-01/products.json?limit=250&fields=id,variants`;
+    while (ccUrl) {
+      const r = await fetch(ccUrl, { headers: { 'X-Shopify-Access-Token': ccToken } });
+      if (!r.ok) break;
+      const data = await r.json();
+      for (const p of (data.products || [])) {
+        for (const v of (p.variants || [])) {
+          ccVariantMap[String(v.id)] = {
+            price: v.price != null ? parseFloat(v.price) : null,
+            compare_at_price: v.compare_at_price != null ? parseFloat(v.compare_at_price) : null,
+          };
+        }
+      }
+      const link = r.headers.get('link') || r.headers.get('Link') || '';
+      const match = link.match(/<([^>]+)>;\s*rel="next"/);
+      ccUrl = match ? match[1] : null;
+    }
+
+    const allMappings = await VPM.all();
+    const byVendor = {};
+    allMappings.forEach(m => { (byVendor[m.vendor_name] = byVendor[m.vendor_name] || []).push(m); });
+
+    const mismatches = [];
+    let checked = 0, skipped_sync_off = 0, vendor_errors = [];
+
+    for (const [vName, vMappings] of Object.entries(byVendor)) {
+      const conn = await VSC.get(vName);
+      if (!conn) continue;
+
+      let vendorVariantMap = {};
+      try {
+        const vProducts = await vendorShopifyRESTPaginated(conn, '/products.json?limit=250&fields=id,variants', 'products');
+        for (const p of vProducts) {
+          for (const v of (p.variants || [])) {
+            vendorVariantMap[String(v.id)] = {
+              price: v.price != null ? parseFloat(v.price) : null,
+              compare_at_price: v.compare_at_price != null ? parseFloat(v.compare_at_price) : null,
+            };
+          }
+        }
+      } catch (e) { vendor_errors.push(`${vName}: ${e.message}`); continue; }
+
+      for (const m of vMappings) {
+        if (m.sync_price === false) { skipped_sync_off++; continue; }
+        const vd = vendorVariantMap[String(m.vendor_variant_id)];
+        const cd = ccVariantMap[String(m.croscrow_variant_id)];
+        if (!vd || !cd) continue;
+        checked++;
+
+        const priceMismatch = vd.price !== null && cd.price !== null && vd.price !== cd.price;
+        const compareAtMismatch = vd.compare_at_price !== cd.compare_at_price;
+
+        if (priceMismatch || compareAtMismatch) {
+          mismatches.push({
+            vendor_name: vName,
+            product_title: m.vendor_product_title,
+            variant_title: m.vendor_variant_title,
+            vendor_price: vd.price,
+            cc_price: cd.price,
+            vendor_compare_at: vd.compare_at_price,
+            cc_compare_at: cd.compare_at_price,
+            price_mismatch: priceMismatch,
+            compare_at_mismatch: compareAtMismatch,
+            croscrow_variant_id: m.croscrow_variant_id,
+          });
+        }
+      }
+    }
+
+    res.json({ checked, skipped_sync_off, mismatch_count: mismatches.length, mismatches, vendor_errors });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get("/admin/vendor-sync/croscrow-products", adminAuth, async (req, res) => {
