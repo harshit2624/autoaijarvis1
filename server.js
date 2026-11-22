@@ -21628,12 +21628,26 @@ app.post("/admin/collections/add-discounted", adminAuth, async (req, res) => {
     );
 
     const userErrors = result.collectionAddProducts?.userErrors || [];
+
+    // Reorder the target collection so these products land in the same
+    // relative sequence they have in the source collection — same technique
+    // as pinWinterProductsToTopOfAll below: moving each to its own index in
+    // turn stacks them at the front in source order, leaving the rest of
+    // the target collection's existing order untouched.
+    const moves = discounted.map((p, i) => ({ id: p.id, newPosition: String(i) }));
+    const reorderResult = await shopifyGraphQL(
+      `mutation($id: ID!, $moves: [MoveInput!]!) { collectionReorderProducts(id: $id, moves: $moves) { job { id done } userErrors { field message } } }`,
+      { id: target.id, moves }
+    );
+    const reorderErrors = reorderResult.collectionReorderProducts?.userErrors || [];
+
     res.json({
       added: discounted.map(p => p.title),
       count: discounted.length,
       from: source.title,
       to: target.id,
       userErrors,
+      reorderErrors,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
