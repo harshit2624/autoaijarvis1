@@ -21867,6 +21867,21 @@ app.post('/admin/vendor-sync/markup-backups', adminAuth, async (req, res) => {
   res.json({ success: true, batch_id: doc.batch_id });
 });
 
+// ── One-off: stamp sync_price_locked_batch onto mapping docs that were
+// locked before that field existed, so a backfilled backup's revert can
+// find them by the same { _id, sync_price_locked_batch } match the normal
+// revert path uses.
+app.post('/admin/vendor-sync/markup-backups/:batch_id/stamp', adminAuth, async (req, res) => {
+  const { ObjectId } = require('mongodb');
+  const { mapping_ids } = req.body || {};
+  if (!Array.isArray(mapping_ids) || !mapping_ids.length) return res.status(400).json({ error: 'mapping_ids[] required' });
+  const result = await mdb.collection('vendor_product_mappings').updateMany(
+    { _id: { $in: mapping_ids.map(id => new ObjectId(id)) } },
+    { $set: { sync_price_locked_batch: req.params.batch_id } }
+  );
+  res.json({ matched: result.matchedCount, modified: result.modifiedCount });
+});
+
 // ── Sync a handpicked collection against a given title list: adds any
 // missing product (matched by normalized title) and reports both titles
 // not found in the store and products currently in the collection that
