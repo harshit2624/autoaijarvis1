@@ -31708,6 +31708,20 @@ app.post('/admin/wa-bot/rates', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Admin debug: raw wa_send_log rows for one phone number (last digits
+// suffix-matched), newest first — for diagnosing a specific failed send.
+app.get('/admin/wa-bot/send-log-for-phone', adminAuth, async (req, res) => {
+  try {
+    const suffix = String(req.query.phone || '').replace(/\D/g, '').slice(-10);
+    if (!suffix) return res.status(400).json({ error: 'phone required' });
+    const rows = await mdb.collection('wa_send_log').find(
+      { phone: { $regex: suffix + '$' } },
+      { projection: { _id: 0 } }
+    ).sort({ sent_at: -1 }).limit(30).toArray();
+    res.json({ rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/admin/wa-bot/analytics', adminAuth, async (req, res) => {
   try {
     const { from, to } = req.query;
