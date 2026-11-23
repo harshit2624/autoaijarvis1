@@ -14916,6 +14916,20 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
           }).catch(() => {});
           if (priceChanged) checkBulkPriceChangeAlert(conn.vendor_name).catch(() => {});
         }
+      } else {
+        // Price sync is deliberately off for this mapping (e.g. a manual
+        // Black-Friday markup we don't want the vendor's own price overwriting).
+        // Still worth knowing if the vendor moved their price — alert admin
+        // on WA so it can be reviewed/applied by hand, since the cron won't.
+        const ccVarNow = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json?fields=price,compare_at_price`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json()).catch(() => null);
+        const ccPrice = parseFloat(ccVarNow?.variant?.price);
+        const ccCompare = ccVarNow?.variant?.compare_at_price != null ? parseFloat(ccVarNow.variant.compare_at_price) : null;
+        const vPrice = parseFloat(vVariant.price);
+        const vCompare = vVariant.compare_at_price != null ? parseFloat(vVariant.compare_at_price) : null;
+        if ((Number.isFinite(vPrice) && vPrice !== ccPrice) || vCompare !== ccCompare) {
+          waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nVENDOR PRICE CHANGED\n(sync is OFF — not applied)\n────────────────\nVENDOR  ${conn.vendor_name}\nPRODUCT ${product.title}\nVARIANT ${vVariant.title || ''}\n────────────────\nOUR PRICE    ₹${Number.isFinite(ccPrice) ? ccPrice : '?'} → vendor now ₹${vPrice}\nOUR COMPARE  ${ccCompare ?? '—'} → vendor now ${vCompare ?? '—'}\n────────────────\nReview and update manually if needed.\n\`\`\``).catch(() => {});
+          logVendorSync(conn.vendor_name, shop, 'products-update', 'price_sync_off_alert', { vendor_variant_id: vVariant.id, croscrow_variant_id: mapping.croscrow_variant_id, vendor_price: vPrice, vendor_compare_at: vCompare, cc_price: ccPrice, cc_compare_at: ccCompare });
+        }
       }
 
       // Sync inventory (skip if sync_inventory disabled on this mapping)
@@ -21662,6 +21676,131 @@ app.post("/admin/collections/add-discounted", adminAuth, async (req, res) => {
       userErrors,
       reorderErrors,
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Read-only: list a collection's products (optionally filtered by vendor)
+// with full variant price data — a one-off diagnostic/listing tool.
+app.get('/admin/collections/:handle/products-detailed', adminAuth, async (req, res) => {
+  try {
+    const vendors = (req.query.vendors || '').split(',').map(v => v.trim()).filter(Boolean);
+    let all = [];
+    let cursor = null, hasNext = true;
+    while (hasNext) {
+      const page = (await shopifyGraphQL(
+        `query($h: String!, $cursor: String) {
+          collectionByHandle(handle: $h) {
+            title
+            products(first: 100, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              edges { node {
+                id title vendor
+                variants(first: 100) { edges { node { id title price compareAtPrice } } }
+              } }
+            }
+          }
+        }`,
+        { h: req.params.handle, cursor }
+      )).collectionByHandle;
+      if (!page) return res.status(404).json({ error: `Collection "${req.params.handle}" not found` });
+      all.push(...page.products.edges.map(e => e.node));
+      hasNext = page.products.pageInfo.hasNextPage;
+      cursor = page.products.pageInfo.endCursor;
+    }
+    const filtered = vendors.length ? all.filter(p => vendors.some(v => v.toLowerCase() === (p.vendor || '').toLowerCase())) : all;
+    res.json({
+      count: filtered.length,
+      products: filtered.map(p => ({
+        id: p.id, title: p.title, vendor: p.vendor,
+        variants: p.variants.edges.map(e => ({ id: e.node.id, title: e.node.title, price: e.node.price, compareAtPrice: e.node.compareAtPrice })),
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── One-off: markup a vendor's products in a collection to a target % off
+// ending in a specific last-two-digit suffix (vendor-specific aesthetic
+// pricing, e.g. SICOS always ends ...86), then lock their price sync off
+// so the vendor-sync cron/webhook can't overwrite the manual markup.
+// suffix_map: { "SICOS": [86], "STARLINQ": [90], "THEFITCHECK": [99, 49] }
+// For each candidate suffix, picks whichever nearby hundred-multiple lands
+// closest to the target discount while staying above price (so it's an
+// actual markup, never a markdown).
+function nearestSuffixedCompareAt(price, targetCompareAt, suffixes) {
+  let best = null;
+  for (const suf of suffixes) {
+    const base = Math.floor(targetCompareAt / 100) * 100;
+    for (const n of [base + suf, base + 100 + suf, base - 100 + suf]) {
+      if (n <= price) continue; // must stay a real markup
+      const diff = Math.abs(n - targetCompareAt);
+      if (!best || diff < best.diff) best = { value: n, diff };
+    }
+  }
+  return best ? best.value : Math.ceil((targetCompareAt + 1) / 100) * 100 + suffixes[0];
+}
+
+app.post('/admin/vendor-sync/markup-and-lock', adminAuth, async (req, res) => {
+  const { collection_handle, vendors, suffix_map, target_discount_pct } = req.body || {};
+  if (!collection_handle || !suffix_map) return res.status(400).json({ error: 'collection_handle and suffix_map required' });
+  const pct = target_discount_pct || 40;
+  try {
+    let all = [];
+    let cursor = null, hasNext = true;
+    while (hasNext) {
+      const page = (await shopifyGraphQL(
+        `query($h: String!, $cursor: String) {
+          collectionByHandle(handle: $h) {
+            products(first: 100, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              edges { node {
+                id title vendor
+                variants(first: 100) { edges { node { id title price compareAtPrice } } }
+              } }
+            }
+          }
+        }`,
+        { h: collection_handle, cursor }
+      )).collectionByHandle;
+      if (!page) return res.status(404).json({ error: `Collection "${collection_handle}" not found` });
+      all.push(...page.products.edges.map(e => e.node));
+      hasNext = page.products.pageInfo.hasNextPage;
+      cursor = page.products.pageInfo.endCursor;
+    }
+    const vendorList = (vendors || Object.keys(suffix_map)).map(v => v.toLowerCase());
+    const targetProducts = all.filter(p => vendorList.includes((p.vendor || '').toLowerCase()));
+
+    const token = await getAccessToken();
+    const results = [];
+    for (const p of targetProducts) {
+      const suffixes = suffix_map[p.vendor] || suffix_map[Object.keys(suffix_map).find(k => k.toLowerCase() === p.vendor.toLowerCase())];
+      if (!suffixes) continue;
+      for (const v of p.variants.edges.map(e => e.node)) {
+        const variantNumId = gidToNumeric(v.id);
+        const price = parseFloat(v.price);
+        if (!Number.isFinite(price) || price <= 0) continue;
+        const targetCompareAt = price / (1 - pct / 100);
+        const newCompareAt = nearestSuffixedCompareAt(price, targetCompareAt, suffixes);
+
+        await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${variantNumId}.json`, {
+          method: 'PUT',
+          headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ variant: { id: variantNumId, compare_at_price: `${newCompareAt}.00` } }),
+        }).catch(e => { throw new Error(`Variant ${variantNumId} update failed: ${e.message}`); });
+
+        const lockResult = await mdb.collection('vendor_product_mappings').updateMany(
+          { vendor_name: p.vendor, croscrow_variant_id: String(variantNumId) },
+          { $set: { sync_price: false, sync_price_locked_reason: 'manual_bf_markup', sync_price_locked_at: new Date().toISOString() } }
+        );
+
+        results.push({
+          vendor: p.vendor, product: p.title, variant: v.title,
+          price, old_compare_at: v.compareAtPrice, new_compare_at: newCompareAt,
+          actual_discount_pct: parseFloat((100 - (price / newCompareAt) * 100).toFixed(1)),
+          mappings_locked: lockResult.modifiedCount,
+        });
+      }
+    }
+    res.json({ collection: collection_handle, count: results.length, results });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
