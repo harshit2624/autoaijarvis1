@@ -33096,27 +33096,17 @@ setInterval(() => { const now = Date.now(); _waBotSentJids.forEach((ts, jid) => 
 // object was recreated locally inside startBaileysBot() and only reachable
 // by waSharedMessageHandler's own closure; adminAfternoonDigest and others
 // were passed the raw waSocket instead, bypassing Cloud API entirely.
+// Baileys is retired — all sends go via the official WA Cloud API session
+// path. No Baileys fallback: a failed Cloud send is reported honestly
+// instead of silently retrying through a defunct connection.
 const waProxySock = {
-  sendMessage: async (jid, content, ...rest) => {
+  sendMessage: async (jid, content) => {
     _waBotSentJids.set(jid, Date.now());
-    if (!content?.poll) {
-      const settings = await getWACloudSettings().catch(() => null);
-      if (settings?.active_model === 'cloud' && settings?.templates_enabled) {
-        const result = await waCloudSendSession(jid, content);
-        if (result.sent) return result;
-        if (!waSocket || !waConnected) { console.error(`❌ WA send failed — Cloud API failed (${result.reason}) and Baileys not connected`); return result; }
-      }
-    }
-    // Baileys doesn't understand the {list} / {ctaUrl} Cloud-only shapes —
-    // fall back to plain text (content.text, e.g. the old WA_MENUS string)
-    // if one was supplied alongside, since this path only runs when Cloud
-    // API failed or isn't the active model.
-    if ((content?.list || content?.ctaUrl) && content?.text) {
-      return waSocket?.sendMessage(jid, { text: content.text }, ...rest);
-    }
-    return waSocket?.sendMessage(jid, content, ...rest);
+    const result = await waCloudSendSession(jid, content);
+    if (!result.sent) console.error(`❌ WA Cloud send failed for ${jid}: ${result.reason}`);
+    return result;
   },
-  readMessages: (...a) => waSocket?.readMessages(...a),
+  readMessages: () => {},
   ev: { on: () => {} }, authState: { creds: { me: { id: '' } } },
 };
 
