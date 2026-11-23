@@ -21743,6 +21743,7 @@ app.post('/admin/vendor-sync/markup-and-lock', adminAuth, async (req, res) => {
   const { collection_handle, vendors, suffix_map, target_discount_pct } = req.body || {};
   if (!collection_handle || !suffix_map) return res.status(400).json({ error: 'collection_handle and suffix_map required' });
   const pct = target_discount_pct || 40;
+  const batchId = `bf-markup-${Date.now()}`;
   try {
     let all = [];
     let cursor = null, hasNext = true;
@@ -21787,21 +21788,83 @@ app.post('/admin/vendor-sync/markup-and-lock', adminAuth, async (req, res) => {
           body: JSON.stringify({ variant: { id: variantNumId, compare_at_price: `${newCompareAt}.00` } }),
         }).catch(e => { throw new Error(`Variant ${variantNumId} update failed: ${e.message}`); });
 
+        const affectedMappings = await mdb.collection('vendor_product_mappings')
+          .find({ vendor_name: p.vendor, croscrow_variant_id: String(variantNumId) })
+          .project({ _id: 1, sync_price: 1 }).toArray();
         const lockResult = await mdb.collection('vendor_product_mappings').updateMany(
           { vendor_name: p.vendor, croscrow_variant_id: String(variantNumId) },
-          { $set: { sync_price: false, sync_price_locked_reason: 'manual_bf_markup', sync_price_locked_at: new Date().toISOString() } }
+          { $set: { sync_price: false, sync_price_locked_reason: 'manual_bf_markup', sync_price_locked_at: new Date().toISOString(), sync_price_locked_batch: batchId } }
         );
 
         results.push({
-          vendor: p.vendor, product: p.title, variant: v.title,
+          vendor: p.vendor, product: p.title, variant: v.title, variant_id: variantNumId,
           price, old_compare_at: v.compareAtPrice, new_compare_at: newCompareAt,
           actual_discount_pct: parseFloat((100 - (price / newCompareAt) * 100).toFixed(1)),
           mappings_locked: lockResult.modifiedCount,
+          mapping_ids: affectedMappings.map(m => m._id.toString()),
+          mapping_old_sync_price: affectedMappings.map(m => m.sync_price !== false),
         });
       }
     }
-    res.json({ collection: collection_handle, count: results.length, results });
+    // Durable backup so a later "revert this" doesn't need to be
+    // reconstructed by hand — restores old compare_at + old sync_price.
+    await mdb.collection('vendor_markup_backups').insertOne({
+      batch_id: batchId, created_at: new Date().toISOString(),
+      collection_handle, vendors: vendorList, suffix_map, target_discount_pct: pct,
+      items: results,
+    }).catch(() => {});
+    res.json({ batch_id: batchId, collection: collection_handle, count: results.length, results });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Revert a markup-and-lock batch: restores each variant's old
+// compare_at_price (REST PUT) and each locked mapping's old sync_price,
+// but only for mappings still locked by THIS batch (so a later, unrelated
+// change to the same mapping is never clobbered).
+app.post('/admin/vendor-sync/markup-and-lock/revert', adminAuth, async (req, res) => {
+  const { batch_id } = req.body || {};
+  if (!batch_id) return res.status(400).json({ error: 'batch_id required' });
+  try {
+    const backup = await mdb.collection('vendor_markup_backups').findOne({ batch_id });
+    if (!backup) return res.status(404).json({ error: `No backup found for batch_id "${batch_id}"` });
+    const token = await getAccessToken();
+    const { ObjectId } = require('mongodb');
+    const results = [];
+    for (const item of backup.items) {
+      const restoreValue = item.old_compare_at != null ? item.old_compare_at : null;
+      await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${item.variant_id}.json`, {
+        method: 'PUT',
+        headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variant: { id: item.variant_id, compare_at_price: restoreValue } }),
+      }).catch(() => {});
+
+      let unlocked = 0;
+      for (let i = 0; i < (item.mapping_ids || []).length; i++) {
+        const r = await mdb.collection('vendor_product_mappings').updateOne(
+          { _id: new ObjectId(item.mapping_ids[i]), sync_price_locked_batch: batch_id },
+          { $set: { sync_price: item.mapping_old_sync_price[i] }, $unset: { sync_price_locked_reason: '', sync_price_locked_at: '', sync_price_locked_batch: '' } }
+        );
+        unlocked += r.modifiedCount;
+      }
+      results.push({ vendor: item.vendor, product: item.product, variant: item.variant, restored_compare_at: restoreValue, mappings_unlocked: unlocked });
+    }
+    await mdb.collection('vendor_markup_backups').updateOne({ batch_id }, { $set: { reverted_at: new Date().toISOString() } });
+    res.json({ batch_id, count: results.length, results });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Raw insert for a markup backup doc — lets a pre-existing markup run
+// (done before this backup mechanism existed) be backfilled into the same
+// revertable format, instead of being unrecoverable.
+app.post('/admin/vendor-sync/markup-backups', adminAuth, async (req, res) => {
+  const doc = req.body || {};
+  if (!doc.batch_id || !Array.isArray(doc.items)) return res.status(400).json({ error: 'batch_id and items[] required' });
+  await mdb.collection('vendor_markup_backups').updateOne(
+    { batch_id: doc.batch_id },
+    { $set: { ...doc, created_at: doc.created_at || new Date().toISOString() } },
+    { upsert: true }
+  );
+  res.json({ success: true, batch_id: doc.batch_id });
 });
 
 // ── Sync a handpicked collection against a given title list: adds any
