@@ -21729,6 +21729,35 @@ app.post('/admin/collections/handpicked-sync', adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Remove products from a collection by collection_id + title list (the
+// by-id counterpart to the by-handle /remove-products route above).
+app.post('/admin/collections/remove-products-by-id', adminAuth, async (req, res) => {
+  const { collection_id, titles } = req.body || {};
+  if (!collection_id || !Array.isArray(titles) || !titles.length) {
+    return res.status(400).json({ error: 'collection_id and titles[] required' });
+  }
+  try {
+    const gid = String(collection_id).startsWith('gid://') ? collection_id : `gid://shopify/Collection/${collection_id}`;
+    const data = await shopifyGraphQL(
+      `query($id: ID!) { collection(id: $id) { title products(first: 100) { edges { node { id title } } } } }`,
+      { id: gid }
+    );
+    const col = data.collection;
+    if (!col) return res.status(404).json({ error: `Collection ${collection_id} not found` });
+
+    const wanted = new Set(titles.map(normTitle));
+    const toRemove = col.products.edges.map(e => e.node).filter(p => wanted.has(normTitle(p.title)));
+    if (!toRemove.length) return res.json({ collection: col.title, removed: [], message: 'None of the given titles are currently in this collection.' });
+
+    const result = await shopifyGraphQL(
+      `mutation($id: ID!, $productIds: [ID!]!) { collectionRemoveProducts(id: $id, productIds: $productIds) { job { id } userErrors { field message } } }`,
+      { id: gid, productIds: toRemove.map(p => p.id) }
+    );
+    const userErrors = result.collectionRemoveProducts?.userErrors || [];
+    res.json({ collection: col.title, removed: toRemove.map(p => p.title), userErrors });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Keep "WINTERS 003" products pinned to the top of "All", in the same
 // manual order they're sorted in over there — re-synced on a schedule so it
 // never needs to be dragged by hand, even as Winters' lineup/order changes.
