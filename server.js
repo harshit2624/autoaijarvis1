@@ -6612,6 +6612,19 @@ async function uploadImageToShopifyFiles(buffer, mimetype, filename) {
   return { fileId, imageUrl };
 }
 
+// One-off admin tool: upload an image straight to Shopify Files (shop_images)
+// so it can be referenced from a theme section's image_picker setting as
+// "shopify://shop_images/<filename>". Returns the exact filename to use.
+const adminShopImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+app.post('/admin/theme-assets/upload-shop-image', adminAuth, adminShopImageUpload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'image file required' });
+    const safeName = (req.body?.filename || req.file.originalname || 'upload.png').replace(/[^a-zA-Z0-9._-]/g, '-');
+    const { fileId, imageUrl } = await uploadImageToShopifyFiles(req.file.buffer, req.file.mimetype, safeName);
+    res.json({ fileId, imageUrl, filename: safeName, shopify_ref: `shopify://shop_images/${safeName}` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Resolves a vendor's brand collection via GraphQL (id, handle, title,
 // descriptionHtml, image, and all 3 branding metafields in one round trip).
 async function resolveVendorCollection(vendorName) {
