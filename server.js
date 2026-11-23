@@ -31290,6 +31290,22 @@ async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
   }).catch(() => ({ sent: false, reason: 'session_send_error' }));
 
   if (sessionResult.sent) {
+    // Meta's send API can 200 with a wamid even when the 24h window is
+    // actually closed — the real rejection ("Re-engagement message", error
+    // 131047) only shows up a moment later via the delivery-status webhook,
+    // after this function has already returned. Tag the wa_send_log row
+    // with everything needed to retry via template, so the webhook handler
+    // (search for RE_ENGAGEMENT_RETRY below) can catch it after the fact.
+    if (sessionResult.messageId) {
+      await mdb.collection('wa_send_log').updateOne(
+        { wamid: sessionResult.messageId },
+        { $set: { retry_context: {
+            type: 'high_risk_advance_ask',
+            order_id: String(order.id), order_name: order.name,
+            phone10, total: total.toFixed(0), codDue: codDue.toFixed(0), orderSlug,
+          } } }
+      ).catch(() => {});
+    }
     auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10, via: 'session' });
     return { sent: true, via: 'session' };
   }
@@ -31307,13 +31323,36 @@ async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
     return { sent: true, via: 'template' };
   }
 
-  // Last resort: Baileys plain text, no button — session + template both failed.
-  await waProxySock.sendMessage(`91${phone10}@s.whatsapp.net`, {
-    text: `*HIGH RISK — ACTION NEEDED*\nOrder *${order.name}*\n\nOur shipping partner shows multiple rejected COD orders on this number/address. To confirm this order isn't a mistake, please *pay ₹99 now*: ${trackUrl}\n\n*TOTAL* ₹${total.toFixed(0)} · *PAY NOW* ₹99 · *COD DUE* ₹${codDue.toFixed(0)}`,
-  }).catch(() => {});
+  // Both the session message and the Meta-approved template failed — nothing
+  // left to retry (Baileys is retired; the Cloud API is now the only send
+  // path). Report failure honestly instead of claiming success.
+  auditLog('admin', 'high_risk_advance_ask_failed', String(order.id), { order_name: order.name, phone10, session_fail_reason: sessionResult.reason, template_fail_reason: templateResult.reason });
+  return { sent: false, via: 'none', reason: templateResult.reason || sessionResult.reason };
+}
 
-  auditLog('admin', 'high_risk_advance_ask_sent', String(order.id), { order_name: order.name, phone10, via: 'baileys_fallback', template_fail_reason: templateResult.reason });
-  return { sent: true, via: 'baileys_fallback' };
+// Re-engagement retry: when a 'session' send later fails with Meta's
+// "Re-engagement message" error (the async failure described above), and
+// that wamid carries a retry_context, fire the matching Meta-approved
+// template instead. Called from the WA Cloud status webhook.
+async function retryViaTemplateIfReengagement(wamid, failReason) {
+  if (!/re-?engagement/i.test(failReason || '')) return;
+  const row = await mdb.collection('wa_send_log').findOne({ wamid });
+  const ctx = row?.retry_context;
+  if (!ctx || ctx.retried) return;
+  await mdb.collection('wa_send_log').updateOne({ wamid }, { $set: { 'retry_context.retried': true } });
+
+  if (ctx.type === 'high_risk_advance_ask') {
+    const templateResult = await sendWACloudTemplate({
+      phone10: ctx.phone10,
+      templateName: WA_TPL.ORDER_HIGH_RISK_ADVANCE,
+      lang: 'en_US',
+      bodyParams: [ctx.order_name, ctx.total, ctx.codDue],
+      urlButtonParam: ctx.orderSlug,
+    }).catch(e => ({ sent: false, reason: e.message }));
+    auditLog('system', 'high_risk_advance_ask_reengagement_retry', ctx.order_id, {
+      order_name: ctx.order_name, phone10: ctx.phone10, template_sent: !!templateResult.sent, template_fail_reason: templateResult.reason,
+    });
+  }
 }
 
 // Full customer-facing template demo flow — order confirmation through
@@ -31663,6 +31702,7 @@ app.post('/webhooks/whatsapp-cloud', async (req, res) => {
       if (st.pricing) { _wsUpdate.pricing_category = st.pricing.category || null; _wsUpdate.billable = !!st.pricing.billable; }
       if (st.status === 'failed' && st.errors?.length) { _wsUpdate.status = 'failed'; _wsUpdate.reason = st.errors[0]?.title || st.errors[0]?.message || 'delivery_failed'; }
       await mdb.collection('wa_send_log').updateOne({ wamid: st.id }, { $set: _wsUpdate });
+      if (_wsUpdate.reason) retryViaTemplateIfReengagement(st.id, _wsUpdate.reason).catch(e => console.error('reengagement retry error:', e.message));
       console.log(`📶 WA Cloud status: ${st.id} → ${st.status}${st.errors ? ' ERROR: ' + JSON.stringify(st.errors) : ''}`);
     }
   } catch (e) { console.error('WA Cloud webhook error:', e.message); }
