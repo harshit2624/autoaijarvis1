@@ -21652,6 +21652,83 @@ app.post("/admin/collections/add-discounted", adminAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Sync a handpicked collection against a given title list: adds any
+// missing product (matched by normalized title) and reports both titles
+// not found in the store and products currently in the collection that
+// aren't on the given list. One-off/manual tool — not scheduled.
+function normTitle(t) {
+  return String(t || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+app.post('/admin/collections/handpicked-sync', adminAuth, async (req, res) => {
+  const { collection_id, titles } = req.body || {};
+  if (!collection_id || !Array.isArray(titles) || !titles.length) {
+    return res.status(400).json({ error: 'collection_id and titles[] required' });
+  }
+  try {
+    const gid = String(collection_id).startsWith('gid://') ? collection_id : `gid://shopify/Collection/${collection_id}`;
+
+    // Paginate current collection products
+    let current = [];
+    let cursor = null, hasNext = true;
+    while (hasNext) {
+      const page = (await shopifyGraphQL(
+        `query($id: ID!, $cursor: String) {
+          collection(id: $id) {
+            title
+            products(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } edges { node { id title } } }
+          }
+        }`,
+        { id: gid, cursor }
+      )).collection;
+      if (!page) return res.status(404).json({ error: `Collection ${collection_id} not found` });
+      current.push(...page.products.edges.map(e => e.node));
+      hasNext = page.products.pageInfo.hasNextPage;
+      cursor = page.products.pageInfo.endCursor;
+    }
+    const collectionTitle = (await shopifyGraphQL(`query($id: ID!) { collection(id: $id) { title } }`, { id: gid })).collection.title;
+
+    const currentByNorm = new Map(current.map(p => [normTitle(p.title), p]));
+    const wantedNorms = new Set(titles.map(normTitle));
+
+    const missingTitles = titles.filter(t => !currentByNorm.has(normTitle(t)));
+    const extraInCollection = current.filter(p => !wantedNorms.has(normTitle(p.title))).map(p => p.title);
+
+    // Try to find each missing title in the store and add it
+    const added = [];
+    const notFoundInStore = [];
+    for (const t of missingTitles) {
+      const search = await shopifyGraphQL(
+        `query($q: String!) { products(first: 5, query: $q) { edges { node { id title } } } }`,
+        { q: `title:*${t.replace(/"/g, '')}*` }
+      );
+      const candidates = search.products?.edges?.map(e => e.node) || [];
+      const exact = candidates.find(c => normTitle(c.title) === normTitle(t));
+      const match = exact || candidates[0];
+      if (!match) { notFoundInStore.push(t); continue; }
+      added.push({ requested: t, matched: match.title, id: match.id });
+    }
+
+    let userErrors = [];
+    if (added.length) {
+      const result = await shopifyGraphQL(
+        `mutation($id: ID!, $productIds: [ID!]!) { collectionAddProducts(id: $id, productIds: $productIds) { userErrors { field message } } }`,
+        { id: gid, productIds: added.map(a => a.id) }
+      );
+      userErrors = result.collectionAddProducts?.userErrors || [];
+    }
+
+    res.json({
+      collection: collectionTitle,
+      total_requested: titles.length,
+      already_present: titles.length - missingTitles.length,
+      added: added.map(a => ({ title: a.matched, requested_as: a.requested })),
+      not_found_in_store: notFoundInStore,
+      extra_in_collection_not_in_list: extraInCollection,
+      userErrors,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Keep "WINTERS 003" products pinned to the top of "All", in the same
 // manual order they're sorted in over there — re-synced on a schedule so it
 // never needs to be dragged by hand, even as Winters' lineup/order changes.
