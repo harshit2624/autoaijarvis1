@@ -9468,13 +9468,21 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
       }
     });
 
-    // Invoiced penalty total per vendor (penalties already locked into invoices)
-    // Used to adjust live netPayable so it matches invoice totals
+    // Invoiced penalty total per vendor (penalties already locked into invoices),
+    // NET of any waiver applied on that invoice — settlement_penalties.amount is
+    // always the full pre-waiver penalty (see /admin/settlements/generate and
+    // /admin/settlements/:id/edit, both insert `amount: p.penalty_amount`
+    // unconditionally), so summing it directly double-counts every waived
+    // rupee: the invoice's own net_payable (and so totalSettled) already
+    // nets `penalty_deduction - penalty_waiver_amount`, but this map was
+    // adding back the full pre-waiver `penalty_deduction` on top — inflating
+    // netPayable/pendingSettlement by the full waived amount. Confirmed live:
+    // ₹59,305 wrongly re-added across 17 vendors (SICOS ₹25,900, ODD AFFAIR
+    // ₹14,510 alone) before this fix.
     const invoicedPenaltyByVendor = {};
-    const settlIdToVendor = Object.fromEntries(allSettlDocs.map(s => [s.id, s.vendor_name]));
-    allSettlPenalties.forEach(sp => {
-      const vendor = settlIdToVendor[sp.settlement_id];
-      if (vendor) invoicedPenaltyByVendor[vendor] = (invoicedPenaltyByVendor[vendor] || 0) + (sp.amount || 0);
+    allSettlDocs.forEach(s => {
+      const net = (s.penalty_deduction || 0) - (s.penalty_waiver_amount || 0);
+      if (net) invoicedPenaltyByVendor[s.vendor_name] = (invoicedPenaltyByVendor[s.vendor_name] || 0) + net;
     });
 
     const vendorMap = {};
