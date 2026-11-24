@@ -25521,6 +25521,84 @@ app.get('/admin/onboards', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /careers/apply — public job application form (careers.html)
+app.post('/careers/apply', async (req, res) => {
+  try {
+    const {
+      full_name, phone, email, city,
+      role, position_type, experience_years, experience_desc,
+      availability, languages, tools, resume_link, portfolio_link,
+      expected_compensation, linkedin, how_heard, why_join,
+    } = req.body || {};
+
+    if (!full_name?.trim() || !phone?.trim() || !email?.trim() || !city?.trim() || !role?.trim() || !position_type?.trim() || !experience_desc?.trim() || !why_join?.trim())
+      return res.status(400).json({ error: 'Please fill in all required fields.' });
+
+    const ROLE_LABELS = {
+      ops: 'Operations Management (Orders, Returns & Exchange)',
+      support: 'Customer Support (Calls & WhatsApp)',
+      social: 'Social Media & Content (Creator Management)',
+    };
+    if (!ROLE_LABELS[role]) return res.status(400).json({ error: 'Invalid role selected.' });
+
+    const doc = {
+      full_name: full_name.trim(),
+      phone: phone.trim(),
+      email: email.toLowerCase().trim(),
+      city: city.trim(),
+      role,
+      role_label: ROLE_LABELS[role],
+      position_type: position_type.trim(),
+      experience_years: experience_years?.trim() || '',
+      experience_desc: experience_desc.trim().slice(0, 2000),
+      availability: availability?.trim() || '',
+      languages: Array.isArray(languages) ? languages : (languages ? [languages] : []),
+      tools: Array.isArray(tools) ? tools : (tools ? [tools] : []),
+      resume_link: resume_link?.trim() || '',
+      portfolio_link: portfolio_link?.trim() || '',
+      expected_compensation: expected_compensation?.trim() || '',
+      linkedin: linkedin?.trim() || '',
+      how_heard: how_heard?.trim() || '',
+      why_join: why_join.trim().slice(0, 2000),
+      status: 'new',
+      submitted_at: new Date().toISOString(),
+    };
+
+    await mdb.collection('job_applications').insertOne(doc);
+    auditLog('public', 'job_application_submit', '', { email: doc.email, role: doc.role });
+
+    waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nNEW JOB APPLICATION\n────────────────\nROLE     ${doc.role_label}\nTYPE     ${doc.position_type}\nNAME     ${doc.full_name}\nPHONE    ${doc.phone}\nEMAIL    ${doc.email}\nCITY     ${doc.city}\nEXP      ${doc.experience_years || '—'}\n────────────────\nAdmin → Careers\n\`\`\``).catch(() => {});
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ /careers/apply:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/careers/applications — list all job applications
+app.get('/admin/careers/applications', adminAuth, async (req, res) => {
+  try {
+    const { role, status } = req.query;
+    const q = {};
+    if (role) q.role = role;
+    if (status) q.status = status;
+    const docs = await mdb.collection('job_applications').find(q).sort({ submitted_at: -1 }).toArray();
+    res.json({ applications: docs });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /admin/careers/applications/:id — update an application's status
+app.put('/admin/careers/applications/:id', adminAuth, async (req, res) => {
+  try {
+    const { status } = req.body || {};
+    if (!['new', 'shortlisted', 'rejected', 'hired'].includes(status))
+      return res.status(400).json({ error: 'Invalid status.' });
+    await mdb.collection('job_applications').updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status, updated_at: new Date().toISOString() } });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST /admin/onboards/:email/approve — approve and create vendor account
 app.post('/admin/onboards/:email/approve', adminAuth, async (req, res) => {
   try {

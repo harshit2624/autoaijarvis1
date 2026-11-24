@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Careers — CROSCROW</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #ffffff;
+      --bg-card:   #ffffff;
+      --bg-card2:  #f7f7f7;
+      --border:    #ebebeb;
+      --border-hi: #d4d4d4;
+      --accent:    #0a0a0a;
+      --red:       #c00000;
+      --red-bg:    #fff5f5;
+      --green:     #0a7c4e;
+      --green-bg:  #f0fdf4;
+      --text:      #0a0a0a;
+      --text-muted:#8c8c8c;
+      --text-dim:  #4a4a4a;
+      --shadow:    0 1px 4px rgba(0,0,0,0.06);
+      --radius:    10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page-wrap { max-width: 600px; margin: 0 auto; padding: 20px 16px 60px; }
+
+    .header { text-align: center; padding: 20px 0 18px; }
+    .header-title { font-size: 22px; font-weight: 800; color: var(--text); letter-spacing: -0.5px; }
+    .header-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
+
+    .divider { height: 1px; background: var(--border); margin: 0 0 20px; }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 14px;
+      box-shadow: var(--shadow);
+    }
+    .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 14px; }
+
+    .field { margin-bottom: 14px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .field label .req { color: var(--red); }
+    .field label .opt { color: var(--text-muted); font-weight: 400; }
+    .field input[type=text], .field input[type=email], .field input[type=tel], .field input[type=url], .field input[type=number], .field select, .field textarea {
+      width: 100%; padding: 11px 12px; border: 1px solid var(--border-hi); border-radius: 8px;
+      font: 400 14px/1.4 'Inter', sans-serif; color: var(--text); background: #fff; outline: none;
+      transition: border-color .15s;
+    }
+    .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+    .field textarea { resize: vertical; min-height: 78px; }
+    .field .hint { font-size: 11.5px; color: var(--text-muted); margin-top: 5px; }
+
+    .role-cards { display: flex; flex-direction: column; gap: 8px; }
+    .role-card { border: 1.5px solid var(--border-hi); border-radius: 10px; padding: 13px 14px; cursor: pointer; transition: border-color .15s, background .15s; }
+    .role-card:hover { border-color: #bbb; }
+    .role-card.is-on { border-color: var(--accent); background: var(--bg-card2); }
+    .role-card b { display: block; font-size: 13.5px; margin-bottom: 2px; }
+    .role-card span { font-size: 12px; color: var(--text-muted); }
+
+    .seg { display: flex; gap: 8px; }
+    .seg button { flex: 1; padding: 10px; border: 1.5px solid var(--border-hi); background: #fff; border-radius: 8px; font: 600 13px 'Inter', sans-serif; cursor: pointer; transition: all .15s; }
+    .seg button.is-on { border-color: var(--accent); background: var(--accent); color: #fff; }
+
+    .check-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .check-chip { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid var(--border-hi); border-radius: 99px; padding: 7px 13px; font-size: 12.5px; cursor: pointer; user-select: none; transition: all .15s; }
+    .check-chip.is-on { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .check-chip input { display: none; }
+
+    .role-extra { display: none; }
+    .role-extra.is-visible { display: block; }
+
+    .submit-btn {
+      width: 100%; padding: 15px; background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+      font: 700 14.5px 'Inter', sans-serif; letter-spacing: .02em; cursor: pointer; margin-top: 4px;
+      transition: opacity .15s;
+    }
+    .submit-btn:hover { opacity: .88; }
+    .submit-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    .msg { display: none; padding: 13px 14px; border-radius: 9px; font-size: 13.5px; margin-bottom: 14px; }
+    .msg.is-error { display: block; background: var(--red-bg); color: var(--red); }
+    .msg.is-done { display: block; background: var(--green-bg); color: var(--green); }
+
+    .success-wrap { display: none; text-align: center; padding: 50px 20px; }
+    .success-wrap.is-visible { display: block; }
+    .success-wrap .tick { width: 52px; height: 52px; border-radius: 50%; background: var(--green-bg); color: var(--green); display: flex; align-items: center; justify-content: center; margin: 0 auto 18px; font-size: 26px; }
+    .success-wrap h2 { font-size: 19px; margin-bottom: 8px; }
+    .success-wrap p { font-size: 13.5px; color: var(--text-muted); line-height: 1.6; max-width: 360px; margin: 0 auto; }
+
+    #form-wrap.is-hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="page-wrap">
+    <div class="header">
+      <div class="header-title">Join CROSCROW</div>
+      <div class="header-sub">We're hiring across Operations, Customer Support and Social Media/Content.<br>Fill this out and our team will reach out.</div>
+    </div>
+    <div class="divider"></div>
+
+    <div id="form-wrap">
+      <div id="msg" class="msg"></div>
+
+      <form id="careers-form">
+        <div class="card">
+          <div class="card-title">Role</div>
+          <div class="field">
+            <label>Which role are you applying for? <span class="req">*</span></label>
+            <div class="role-cards" id="role-cards">
+              <label class="role-card" data-role="ops">
+                <input type="radio" name="role" value="ops" style="display:none">
+                <b>Operations Management</b>
+                <span>Orders, returns & exchange</span>
+              </label>
+              <label class="role-card" data-role="support">
+                <input type="radio" name="role" value="support" style="display:none">
+                <b>Customer Support</b>
+                <span>Calls & WhatsApp</span>
+              </label>
+              <label class="role-card" data-role="social">
+                <input type="radio" name="role" value="social" style="display:none">
+                <b>Social Media & Content</b>
+                <span>Content + creator management</span>
+              </label>
+            </div>
+          </div>
+          <div class="field" style="margin-top:14px">
+            <label>Employment type <span class="req">*</span></label>
+            <div class="seg" id="position-type-seg">
+              <button type="button" data-val="full_time">Full-time</button>
+              <button type="button" data-val="intern">Intern</button>
+            </div>
+            <input type="hidden" name="position_type" id="position_type">
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Your details</div>
+          <div class="field">
+            <label>Full name <span class="req">*</span></label>
+            <input type="text" name="full_name" required>
+          </div>
+          <div class="field">
+            <label>Phone / WhatsApp number <span class="req">*</span></label>
+            <input type="tel" name="phone" required>
+          </div>
+          <div class="field">
+            <label>Email <span class="req">*</span></label>
+            <input type="email" name="email" required>
+          </div>
+          <div class="field">
+            <label>City <span class="req">*</span></label>
+            <input type="text" name="city" required>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Experience</div>
+          <div class="field">
+            <label>Years of relevant experience <span class="opt">(0 if fresher/intern)</span></label>
+            <input type="text" name="experience_years" placeholder="e.g. 2 years">
+          </div>
+          <div class="field">
+            <label id="exp-label">Tell us about your relevant experience <span class="req">*</span></label>
+            <textarea name="experience_desc" id="experience_desc" required placeholder="What have you worked on before that's relevant to this role?"></textarea>
+          </div>
+          <div class="field">
+            <label>Languages you're comfortable working in</label>
+            <div class="check-grid" id="lang-grid">
+              <label class="check-chip"><input type="checkbox" name="languages" value="English">English</label>
+              <label class="check-chip"><input type="checkbox" name="languages" value="Hindi">Hindi</label>
+              <label class="check-chip"><input type="checkbox" name="languages" value="Marathi">Marathi</label>
+              <label class="check-chip"><input type="checkbox" name="languages" value="Gujarati">Gujarati</label>
+              <label class="check-chip"><input type="checkbox" name="languages" value="Other">Other</label>
+            </div>
+          </div>
+
+          <!-- Ops-specific -->
+          <div class="role-extra field" data-role-extra="ops">
+            <label>Tools you've used</label>
+            <div class="check-grid">
+              <label class="check-chip"><input type="checkbox" name="tools" value="Shopify">Shopify</label>
+              <label class="check-chip"><input type="checkbox" name="tools" value="Excel/Sheets">Excel/Sheets</label>
+              <label class="check-chip"><input type="checkbox" name="tools" value="Courier/shipping panels">Courier/shipping panels</label>
+              <label class="check-chip"><input type="checkbox" name="tools" value="ERP/inventory tools">ERP/inventory tools</label>
+            </div>
+          </div>
+
+          <!-- Support-specific -->
+          <div class="role-extra field" data-role-extra="support">
+            <label>Tools you've used</label>
+            <div class="check-grid">
+              <label class="check-chip"><input type="checkbox" name="tools" value="WhatsApp Business">WhatsApp Business</label>
+              <label class="check-chip"><input type="checkbox" name="tools" value="Call center/dialer software">Call center/dialer software</label>
+              <label class="check-chip"><input type="checkbox" name="tools" value="Helpdesk tools (Freshdesk, Zendesk etc.)">Helpdesk tools</label>
+              <label class="check-chip"><input type="checkbox" name="tools" value="Shopify">Shopify</label>
+            </div>
+          </div>
+
+          <!-- Social-specific -->
+          <div class="role-extra field" data-role-extra="social">
+            <label>Tools you've used</label>
+            <div class="check-grid">
+              <label class="check-chip"><input type="checkbox" name="tools" value="Canva">Canva</label>
+              <label class="check-chip"><input type="checkbox" name="tools" value="CapCut/Premiere/editing">CapCut/Premiere/editing</label>
+              <label class="check-chip"><input type="checkbox" name="tools" value="Instagram/Meta Business Suite">Instagram/Meta Business Suite</label>
+              <label class="check-chip"><input type="checkbox" name="tools" value="Influencer/creator outreach">Influencer/creator outreach</label>
+            </div>
+          </div>
+          <div class="role-extra field" data-role-extra="social">
+            <label>Instagram / portfolio link <span class="opt">(your work or past brand pages you've managed)</span></label>
+            <input type="url" name="portfolio_link" placeholder="https://instagram.com/...">
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">A bit more</div>
+          <div class="field">
+            <label>When can you join? <span class="opt">(optional)</span></label>
+            <input type="text" name="availability" placeholder="Immediately / 15 days notice / etc.">
+          </div>
+          <div class="field">
+            <label>Expected salary / stipend <span class="opt">(optional)</span></label>
+            <input type="text" name="expected_compensation" placeholder="₹ per month">
+          </div>
+          <div class="field">
+            <label>Resume link <span class="opt">(Google Drive, etc.)</span></label>
+            <input type="url" name="resume_link" placeholder="https://...">
+          </div>
+          <div class="field">
+            <label>LinkedIn <span class="opt">(optional)</span></label>
+            <input type="url" name="linkedin" placeholder="https://linkedin.com/in/...">
+          </div>
+          <div class="field">
+            <label>How did you hear about us? <span class="opt">(optional)</span></label>
+            <input type="text" name="how_heard">
+          </div>
+          <div class="field">
+            <label>Why do you want to join CROSCROW? <span class="req">*</span></label>
+            <textarea name="why_join" required></textarea>
+          </div>
+        </div>
+
+        <button type="submit" class="submit-btn" id="submit-btn">Submit application</button>
+      </form>
+    </div>
+
+    <div class="success-wrap" id="success-wrap">
+      <div class="tick">&#10003;</div>
+      <h2>Application received</h2>
+      <p>Thanks for applying to CROSCROW. Our team will go through your details and reach out if it's a fit.</p>
+    </div>
+  </div>
+
+  <script>
+    var roleCards = document.getElementById('role-cards');
+    var roleExtras = document.querySelectorAll('.role-extra');
+    var expLabel = document.getElementById('exp-label');
+
+    roleCards.addEventListener('click', function (e) {
+      var card = e.target.closest('.role-card');
+      if (!card) return;
+      document.querySelectorAll('.role-card').forEach(function (c) { c.classList.remove('is-on'); });
+      card.classList.add('is-on');
+      card.querySelector('input').checked = true;
+
+      var role = card.getAttribute('data-role');
+      roleExtras.forEach(function (el) {
+        el.classList.toggle('is-visible', el.getAttribute('data-role-extra') === role);
+      });
+    });
+
+    var posSeg = document.getElementById('position-type-seg');
+    var posInput = document.getElementById('position_type');
+    posSeg.addEventListener('click', function (e) {
+      var btn = e.target.closest('button');
+      if (!btn) return;
+      posSeg.querySelectorAll('button').forEach(function (b) { b.classList.remove('is-on'); });
+      btn.classList.add('is-on');
+      posInput.value = btn.getAttribute('data-val');
+    });
+
+    document.querySelectorAll('.check-chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        var input = chip.querySelector('input');
+        input.checked = !input.checked;
+        chip.classList.toggle('is-on', input.checked);
+      });
+    });
+
+    var form = document.getElementById('careers-form');
+    var msg = document.getElementById('msg');
+    var submitBtn = document.getElementById('submit-btn');
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      msg.className = 'msg';
+      msg.textContent = '';
+
+      var selectedRole = form.querySelector('input[name="role"]:checked');
+      if (!selectedRole) {
+        msg.className = 'msg is-error';
+        msg.textContent = 'Please select a role.';
+        msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      if (!posInput.value) {
+        msg.className = 'msg is-error';
+        msg.textContent = 'Please select full-time or intern.';
+        msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+
+      var fd = new FormData(form);
+      var payload = {};
+      fd.forEach(function (value, key) {
+        if (key === 'languages' || key === 'tools') {
+          if (!payload[key]) payload[key] = [];
+          payload[key].push(value);
+        } else {
+          payload[key] = value;
+        }
+      });
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitting...';
+
+      fetch('/careers/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+        .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+        .then(function (res) {
+          if (!res.ok) throw new Error(res.data.error || 'Something went wrong.');
+          document.getElementById('form-wrap').classList.add('is-hidden');
+          document.getElementById('success-wrap').classList.add('is-visible');
+        })
+        .catch(function (err) {
+          msg.className = 'msg is-error';
+          msg.textContent = err.message;
+          msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Submit application';
+        });
+    });
+  </script>
+</body>
+</html>
