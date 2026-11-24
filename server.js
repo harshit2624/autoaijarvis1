@@ -9435,7 +9435,7 @@ app.get("/admin/delivered-summary", adminAuth, async (req, res) => {
 
     // Load all settlement data + penalties + vendor stages in parallel
     const [allSettlDocs, allSettlOrders, allConfirmedPenalties, allSettlPenalties, allVendorStages] = await Promise.all([
-      mdb.collection('settlements').find({}, { projection: { id: 1, vendor_name: 1, net_payable: 1, status: 1, invoice_no: 1, penalty_deduction: 1, _id: 0 } }).toArray(),
+      mdb.collection('settlements').find({}, { projection: { id: 1, vendor_name: 1, net_payable: 1, status: 1, invoice_no: 1, penalty_deduction: 1, penalty_waiver_amount: 1, _id: 0 } }).toArray(),
       mdb.collection('settlement_orders').find({}, { projection: { settlement_id: 1, shopify_order_id: 1, _id: 0 } }).toArray(),
       mdb.collection('order_penalties').find({ status: 'confirmed' }, { projection: { _id: 0 } }).toArray(),
       mdb.collection('settlement_penalties').find({}, { projection: { penalty_id: 1, amount: 1, settlement_id: 1, _id: 0 } }).toArray(),
