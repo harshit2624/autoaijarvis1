@@ -21996,13 +21996,17 @@ app.post('/admin/collections/remove-products-by-id', adminAuth, async (req, res)
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Keep "WINTERS 003" products pinned to the top of "All", in the same
-// manual order they're sorted in over there — re-synced on a schedule so it
-// never needs to be dragged by hand, even as Winters' lineup/order changes.
+// ── Keep "WINTERS 003" products pinned to the top of "All" (and "Sale"), in
+// the same manual order they're sorted in over there — re-synced on a
+// schedule so it never needs to be dragged by hand, even as Winters' lineup/
+// order changes. Sale only ever contains a SUBSET of Winters 003 (whichever
+// products currently have a compare-at price), so for that target we filter
+// the Winters order down to the products Sale actually already has, rather
+// than assuming every Winters product belongs there.
 const WINTER_PIN_SOURCE_HANDLE = 'winters-003';
-const WINTER_PIN_TARGET_HANDLE = 'all';
+const WINTER_PIN_TARGET_HANDLES = ['all', 'sale'];
 
-async function pinWinterProductsToTopOfAll() {
+async function pinWinterProductsToTopOf(targetHandle) {
   const source = (await shopifyGraphQL(
     `query($h: String!) { collectionByHandle(handle: $h) { id title products(first: 250, sortKey: COLLECTION_DEFAULT) { edges { node { id } } } } }`,
     { h: WINTER_PIN_SOURCE_HANDLE }
@@ -22010,20 +22014,27 @@ async function pinWinterProductsToTopOfAll() {
   if (!source) { console.log(`📌 Winter pin: source collection "${WINTER_PIN_SOURCE_HANDLE}" not found, skipping`); return; }
 
   const target = (await shopifyGraphQL(
-    `query($h: String!) { collectionByHandle(handle: $h) { id } }`,
-    { h: WINTER_PIN_TARGET_HANDLE }
+    `query($h: String!) { collectionByHandle(handle: $h) { id products(first: 250) { edges { node { id } } } } }`,
+    { h: targetHandle }
   )).collectionByHandle;
-  if (!target) { console.log(`📌 Winter pin: target collection "${WINTER_PIN_TARGET_HANDLE}" not found, skipping`); return; }
+  if (!target) { console.log(`📌 Winter pin: target collection "${targetHandle}" not found, skipping`); return; }
 
   const winterIds = source.products.edges.map(e => e.node.id);
   if (!winterIds.length) { console.log('📌 Winter pin: source collection is empty, skipping'); return; }
+
+  // Only pin products that already exist in the target — Sale in particular
+  // is a subset of Winters 003, so pinning an id Sale doesn't have would
+  // either error or silently add it there, neither of which we want.
+  const targetIds = new Set(target.products.edges.map(e => e.node.id));
+  const pinIds = winterIds.filter(id => targetIds.has(id));
+  if (!pinIds.length) { console.log(`📌 Winter pin: no overlap between "${WINTER_PIN_SOURCE_HANDLE}" and "${targetHandle}", skipping`); return; }
 
   // Moves apply sequentially, each relative to the state left by the prior
   // move — moving each product to its own index in turn stacks them at the
   // front in the same order as the source collection, and leaves every
   // other product's relative order untouched (collectionReorderProducts'
   // own documented behavior — no need to enumerate the rest of the catalog).
-  const moves = winterIds.map((id, i) => ({ id, newPosition: String(i) })); // UnsignedInt64 must be sent as a string
+  const moves = pinIds.map((id, i) => ({ id, newPosition: String(i) })); // UnsignedInt64 must be sent as a string
 
   const result = await shopifyGraphQL(
     `mutation($id: ID!, $moves: [MoveInput!]!) { collectionReorderProducts(id: $id, moves: $moves) { job { id done } userErrors { field message } } }`,
@@ -22031,7 +22042,13 @@ async function pinWinterProductsToTopOfAll() {
   );
   const errs = result.collectionReorderProducts?.userErrors || [];
   if (errs.length) throw new Error(`collectionReorderProducts errors: ${JSON.stringify(errs)}`);
-  console.log(`✅ Winter pin: moved ${winterIds.length} "${WINTER_PIN_SOURCE_HANDLE}" products to the top of "${WINTER_PIN_TARGET_HANDLE}"`);
+  console.log(`✅ Winter pin: moved ${pinIds.length} "${WINTER_PIN_SOURCE_HANDLE}" products to the top of "${targetHandle}"`);
+}
+
+async function pinWinterProductsToTopOfAll() {
+  for (const handle of WINTER_PIN_TARGET_HANDLES) {
+    await pinWinterProductsToTopOf(handle);
+  }
 }
 setTimeout(() => pinWinterProductsToTopOfAll().catch(e => console.error('❌ Winter pin cron failed:', e.message)), 120000);
 setInterval(() => pinWinterProductsToTopOfAll().catch(e => console.error('❌ Winter pin cron failed:', e.message)), 6 * 60 * 60 * 1000); // every 6 hours
