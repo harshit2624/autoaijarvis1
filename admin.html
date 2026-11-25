@@ -11806,8 +11806,16 @@
             }
             return false;
           };
+          // A CC variant's `title` concatenates EVERY option ("S / Black"), even
+          // a second option with only one value — so a vendor that only sends
+          // plain sizes ("S") never matches on full-title comparison alone.
+          // Prefer the Size option's own value when the variant has one.
+          const sizeToken = cv => {
+            const sizeOpt = (cv.selected_options||[]).find(o => /size/i.test(o.name));
+            return sizeOpt ? sizeOpt.value : cv.title;
+          };
           const autoMatch = (vendorVariants, ccVariants) => vendorVariants.map(vv => {
-            const cc = ccVariants.find(cv => matchNorm(vv.title, cv.title));
+            const cc = ccVariants.find(cv => matchNorm(vv.title, sizeToken(cv)) || matchNorm(vv.title, cv.title));
             return { vendorVariant:vv, ccVariant:cc||null, autoMatched:!!cc, action:cc?'map':'create', overrideCcVariantId:cc?String(cc.id):'' };
           });
           const selectCcProduct = async (cp) => {

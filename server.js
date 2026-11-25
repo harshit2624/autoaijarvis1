@@ -15992,7 +15992,7 @@ app.get("/admin/vendor-sync/croscrow-products", adminAuth, async (req, res) => {
             status
             images(first: 1) { nodes { url } }
             variants(first: 100) {
-              nodes { id title price compareAtPrice }
+              nodes { id title price compareAtPrice selectedOptions { name value } }
             }
           }
         }
@@ -16009,6 +16009,7 @@ app.get("/admin/vendor-sync/croscrow-products", adminAuth, async (req, res) => {
         title: v.title,
         price: v.price,
         compare_at_price: v.compareAtPrice,
+        selected_options: v.selectedOptions || [],
       })),
     }));
 
