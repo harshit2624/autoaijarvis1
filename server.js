@@ -14940,17 +14940,44 @@ app.post('/vendor/shopify/webhook/products-update', async (req, res) => {
         }
       }
 
-      // Sync inventory (skip if sync_inventory disabled on this mapping)
+      // Sync inventory (skip if sync_inventory disabled on this mapping).
+      // When the vendor has inventory tracking OFF for this variant, Shopify
+      // treats it as always purchasable regardless of whatever stale/zero
+      // quantity number sits on the untracked item — copying that number
+      // over literally would wrongly show it out of stock on our side even
+      // though the vendor's own page shows it available. Mirror that by
+      // switching our variant to "sell when out of stock" instead of
+      // pushing the quantity; switch back to enforcing stock (and push the
+      // real quantity) the moment the vendor turns tracking back on.
       if (mapping.sync_inventory) {
-        const qty = parseInt(vVariant.inventory_quantity ?? 0);
-        const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json?fields=inventory_item_id`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json());
-        const ccInvItemId = ccVarData.variant?.inventory_item_id;
-        if (ccInvItemId && ccLocationId) {
-          await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
-            method: 'POST',
+        const vendorTracksNow = vVariant.inventory_management === 'shopify';
+        if (!vendorTracksNow) {
+          await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json`, {
+            method: 'PUT',
             headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
+            body: JSON.stringify({ variant: { id: mapping.croscrow_variant_id, inventory_policy: 'continue' } }),
           });
+        } else {
+          const qty = parseInt(vVariant.inventory_quantity ?? 0);
+          const ccVarData = await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json?fields=inventory_item_id,inventory_policy`, { headers: { 'X-Shopify-Access-Token': ccToken } }).then(r=>r.json());
+          const ccInvItemId = ccVarData.variant?.inventory_item_id;
+          if (ccVarData.variant?.inventory_policy !== 'deny') {
+            await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/variants/${mapping.croscrow_variant_id}.json`, {
+              method: 'PUT',
+              headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ variant: { id: mapping.croscrow_variant_id, inventory_policy: 'deny' } }),
+            });
+          }
+          if (ccInvItemId && ccLocationId) {
+            await fetch(`https://${SHOP}.myshopify.com/admin/api/2025-01/inventory_levels/set.json`, {
+              method: 'POST',
+              headers: { 'X-Shopify-Access-Token': ccToken, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ location_id: ccLocationId, inventory_item_id: ccInvItemId, available: qty }),
+            });
+          }
+        }
+        if (vendorTracksNow !== mapping.vendor_tracks_inventory) {
+          await mdb.collection('vendor_product_mappings').updateOne({ _id: mapping._id }, { $set: { vendor_tracks_inventory: vendorTracksNow } });
         }
       }
 
