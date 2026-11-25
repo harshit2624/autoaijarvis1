@@ -32702,6 +32702,95 @@ async function markWASendConversions() {
 }
 setInterval(markWASendConversions, 15 * 60 * 1000);
 
+// ── Stricter "converted" metric: read-gated, latest-touch-only ─────────────
+// The raw `converted` flag above is intentionally loose — any order from
+// the same phone within the 7-day window counts, even if the customer
+// never opened the message. That overcounts badly (confirmed live: Touch 1
+// showed 44 "converted" vs only 4-5 real click-attributed orders).
+//
+// This adds `converted_strict` alongside it (never overwrites `converted`,
+// so the loose number stays visible for comparison):
+//   - abandoned_cart_recovery / touch2 / touch3 are the same cart's follow-up
+//     sequence. There's no stored cart/checkout id on wa_send_log, so sends
+//     to the same phone within ABANDONED_CART_CLUSTER_GAP_DAYS of each other
+//     are clustered as one sequence (touch2 fires at 24h, touch3 at 48h, so
+//     a few days' gap safely covers the real sequence without merging
+//     unrelated later abandonments).
+//   - Within a cluster: if ANY touch was read, the LATEST touch in that
+//     cluster gets the credit (its own already-computed `converted` fields
+//     are reused as-is) — earlier touches in the same cluster are marked
+//     converted_strict:false even if their own `converted` was true, so a
+//     single recovered cart is never double-counted across touches.
+//   - Every other marketing campaign (win-back, Diwali, back-in-stock,
+//     bestseller carousels) has no multi-touch concept, so it's just gated
+//     on that one send's own read status.
+const ABANDONED_CART_TOUCH_NAMES = ['abandoned_cart_recovery', 'abandoned_cart_recovery_touch2', 'abandoned_cart_recovery_touch3'];
+const ABANDONED_CART_CLUSTER_GAP_DAYS = 4;
+
+async function recomputeStrictConversions({ sinceIso = null } = {}) {
+  if (!mdb) return { updated: 0 };
+  let updated = 0;
+  const baseQuery = { kind: 'template', name: { $in: WA_CAMPAIGN_TEMPLATE_NAMES } };
+  if (sinceIso) baseQuery.sent_at = { $gte: sinceIso };
+
+  // Non-touch campaigns: simple per-row read gate.
+  const singleTouchRows = await mdb.collection('wa_send_log').find(
+    { ...baseQuery, name: { $nin: ABANDONED_CART_TOUCH_NAMES } },
+    { projection: { _id: 1, converted: 1, delivery_status: 1, converted_strict: 1 } }
+  ).toArray();
+  for (const r of singleTouchRows) {
+    const strict = !!r.converted && r.delivery_status === 'read';
+    if (r.converted_strict !== strict) {
+      await mdb.collection('wa_send_log').updateOne({ _id: r._id }, { $set: { converted_strict: strict } });
+      updated++;
+    }
+  }
+
+  // Abandoned-cart touches: cluster by phone, credit latest touch in each cluster.
+  const touchRows = await mdb.collection('wa_send_log').find(
+    { ...baseQuery, name: { $in: ABANDONED_CART_TOUCH_NAMES } },
+    { projection: { _id: 1, phone: 1, sent_at: 1, delivery_status: 1, converted: 1, converted_strict: 1 } }
+  ).sort({ phone: 1, sent_at: 1 }).toArray();
+
+  const gapMs = ABANDONED_CART_CLUSTER_GAP_DAYS * 24 * 60 * 60 * 1000;
+  let cluster = [];
+  const flushCluster = async () => {
+    if (!cluster.length) return;
+    const anyRead = cluster.some(r => r.delivery_status === 'read');
+    const latest = cluster[cluster.length - 1];
+    for (const r of cluster) {
+      const strict = r._id.equals(latest._id) && anyRead && !!r.converted;
+      if (r.converted_strict !== strict) {
+        await mdb.collection('wa_send_log').updateOne({ _id: r._id }, { $set: { converted_strict: strict } });
+        updated++;
+      }
+    }
+    cluster = [];
+  };
+  for (const r of touchRows) {
+    const prev = cluster[cluster.length - 1];
+    if (prev && (prev.phone !== r.phone || (new Date(r.sent_at) - new Date(prev.sent_at)) > gapMs)) {
+      await flushCluster();
+    }
+    cluster.push(r);
+  }
+  await flushCluster();
+
+  return { updated };
+}
+// Keep the strict metric fresh over the same recent window the loose cron
+// scans — full-history backfill is a one-off via the admin endpoint below.
+setInterval(() => {
+  recomputeStrictConversions({ sinceIso: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() }).catch(e => console.error('recomputeStrictConversions error:', e.message));
+}, 20 * 60 * 1000);
+
+app.post('/admin/wa-marketing/recompute-strict-conversions', adminAuth, async (req, res) => {
+  try {
+    const result = await recomputeStrictConversions({}); // no cutoff — full history backfill
+    res.json({ ok: true, ...result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── GET /admin/wa-marketing/campaigns — every marketing WA template,
 // grouped, ads-manager style: sent/delivered/read/converted/revenue per
 // campaign. Pulls straight from wa_send_log (pre-attributed by the cron
@@ -32745,12 +32834,12 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
     const pricing = await getWAPricingSettings();
     const rows = await mdb.collection('wa_send_log').find(
       { kind: 'template', name: { $in: WA_CAMPAIGN_TEMPLATE_NAMES }, sent_at: { $gte: cutoff } },
-      { projection: { name: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, converted_discount_offered: 1, converted_discount_claimed: 1, sent_at: 1, category: 1 } }
+      { projection: { name: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, converted_discount_offered: 1, converted_discount_claimed: 1, converted_strict: 1, sent_at: 1, category: 1 } }
     ).toArray();
 
     const byName = {};
     for (const r of rows) {
-      if (!byName[r.name]) byName[r.name] = { name: r.name, sent: 0, delivered: 0, read: 0, failed: 0, converted: 0, revenue: 0, discount_offered: 0, discount_claimed: 0, billable_sent: 0, last_sent_at: r.sent_at };
+      if (!byName[r.name]) byName[r.name] = { name: r.name, sent: 0, delivered: 0, read: 0, failed: 0, converted: 0, revenue: 0, converted_strict: 0, revenue_strict: 0, discount_offered: 0, discount_claimed: 0, billable_sent: 0, last_sent_at: r.sent_at };
       const c = byName[r.name];
       c.sent++;
       if (r.status === 'failed') c.failed++;
@@ -32774,6 +32863,13 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
         c.discount_offered += (r.converted_discount_offered || 0);
         c.discount_claimed += (r.converted_discount_claimed || 0);
       }
+      // converted_strict: read-gated, latest-touch-only — see
+      // recomputeStrictConversions' comment for exactly what this requires.
+      // Only ever true on rows where `converted` is also true, so revenue_strict
+      // is a proper subset of revenue, not a separate/inflated figure.
+      if (r.converted_strict) {
+        c.converted_strict++; c.revenue_strict += (r.converted_amount || 0);
+      }
       if (r.sent_at > c.last_sent_at) c.last_sent_at = r.sent_at;
     }
     const campaigns = Object.values(byName).map(c => {
@@ -32784,22 +32880,27 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
         read_rate: c.sent ? +(100 * c.read / c.sent).toFixed(1) : 0,
         conversion_rate: c.sent ? +(100 * c.converted / c.sent).toFixed(1) : 0,
         avg_order: c.converted ? +(c.revenue / c.converted).toFixed(0) : 0,
+        conversion_rate_strict: c.sent ? +(100 * c.converted_strict / c.sent).toFixed(1) : 0,
+        avg_order_strict: c.converted_strict ? +(c.revenue_strict / c.converted_strict).toFixed(0) : 0,
         discount_offered: +c.discount_offered.toFixed(2),
         discount_claimed: +c.discount_claimed.toFixed(2),
         spend: +spend.toFixed(2),
         roas: (pricing.marketing_rate && spend > 0) ? +(c.revenue / spend).toFixed(2) : null,
+        roas_strict: (pricing.marketing_rate && spend > 0) ? +(c.revenue_strict / spend).toFixed(2) : null,
       };
     }).sort((a, b) => b.revenue - a.revenue);
 
     const totals = campaigns.reduce((t, c) => ({
       sent: t.sent + c.sent, delivered: t.delivered + c.delivered, read: t.read + c.read,
       converted: t.converted + c.converted, revenue: t.revenue + c.revenue,
+      converted_strict: t.converted_strict + c.converted_strict, revenue_strict: t.revenue_strict + c.revenue_strict,
       discount_offered: t.discount_offered + c.discount_offered, discount_claimed: t.discount_claimed + c.discount_claimed,
       spend: t.spend + c.spend,
-    }), { sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0, discount_offered: 0, discount_claimed: 0, spend: 0 });
+    }), { sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0, converted_strict: 0, revenue_strict: 0, discount_offered: 0, discount_claimed: 0, spend: 0 });
     totals.discount_offered = +totals.discount_offered.toFixed(2);
     totals.discount_claimed = +totals.discount_claimed.toFixed(2);
     totals.roas = (pricing.marketing_rate && totals.spend > 0) ? +(totals.revenue / totals.spend).toFixed(2) : null;
+    totals.roas_strict = (pricing.marketing_rate && totals.spend > 0) ? +(totals.revenue_strict / totals.spend).toFixed(2) : null;
 
     res.json({ days, campaigns, totals, pricing_configured: !!pricing.marketing_rate });
   } catch (e) { res.status(500).json({ error: e.message }); }

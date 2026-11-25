@@ -14407,10 +14407,11 @@
               <div className="stats-grid" style={{marginBottom:16}}>
                 <StatCard color="indigo" icon="→" label="Total Sent" value={campaignData.totals.sent.toLocaleString()}/>
                 <StatCard color="cyan" icon="👁" label="Total Read" value={campaignData.totals.read.toLocaleString()} sub={campaignData.totals.sent?`${Math.round(100*campaignData.totals.read/campaignData.totals.sent)}% read rate`:''}/>
-                <StatCard color="green" icon="✓" label="Converted" value={campaignData.totals.converted.toLocaleString()} sub={campaignData.totals.sent?`${Math.round(100*campaignData.totals.converted/campaignData.totals.sent)}% conversion`:''}/>
-                <StatCard color="purple" icon="₹" label="Revenue Attributed" value={waFmtMoney(campaignData.totals.revenue)} sub="within 7-day window per send"/>
+                <StatCard color="green" icon="✓" label="Converted (loose)" value={campaignData.totals.converted.toLocaleString()} sub={campaignData.totals.sent?`${Math.round(100*campaignData.totals.converted/campaignData.totals.sent)}% — same phone bought within 7d, read or not`:''}/>
+                <StatCard color="green" icon="✓✓" label="Converted (attributed)" value={campaignData.totals.converted_strict.toLocaleString()} sub={campaignData.totals.sent?`${Math.round(100*campaignData.totals.converted_strict/campaignData.totals.sent)}% — opened the message, then bought`:''}/>
+                <StatCard color="purple" icon="₹" label="Revenue Attributed" value={waFmtMoney(campaignData.totals.revenue_strict)} sub={`loose: ${waFmtMoney(campaignData.totals.revenue)}`}/>
                 <StatCard color="yellow" icon="₹" label="Spend (est.)" value={campaignData.pricing_configured ? waFmtMoney(campaignData.totals.spend) : '—'} sub={campaignData.pricing_configured ? 'delivered marketing sends × your rate' : 'enter a rate above'}/>
-                <StatCard color="purple" icon="⚖" label="ROAS" value={campaignData.totals.roas!=null ? `${campaignData.totals.roas}x` : '—'} sub="revenue ÷ spend"/>
+                <StatCard color="purple" icon="⚖" label="ROAS (attributed)" value={campaignData.totals.roas_strict!=null ? `${campaignData.totals.roas_strict}x` : '—'} sub={campaignData.totals.roas!=null?`loose: ${campaignData.totals.roas}x`:'revenue ÷ spend'}/>
               </div>
               <div style={{overflowX:'auto'}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:11.5}}>
@@ -14420,7 +14421,8 @@
                       <th style={{padding:'6px 8px',fontWeight:500}}>Sent</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Delivered</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Read</th>
-                      <th style={{padding:'6px 8px',fontWeight:500}}>Converted</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}} title="Same phone bought anything within 7 days — read or not, could be unrelated">Converted (loose)</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}} title="Stricter: customer actually opened a touch of this cart's recovery sequence (credited to the latest touch), then bought within 7 days">Converted (attributed)</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Conv. Rate</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Avg Order</th>
                       <th style={{padding:'6px 8px',fontWeight:500}}>Revenue</th>
@@ -14437,22 +14439,26 @@
                         <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{c.sent}</td>
                         <td style={{padding:'9px 8px',color:'var(--cyan)'}}>{c.delivered} <span style={{color:'var(--text-muted)',fontSize:10}}>({c.delivered_rate}%)</span></td>
                         <td style={{padding:'9px 8px',color:'var(--green)'}}>{c.read} <span style={{color:'var(--text-muted)',fontSize:10}}>({c.read_rate}%)</span></td>
-                        <td style={{padding:'9px 8px',color:'var(--text)'}}>{c.converted}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-muted)'}}>{c.converted}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text)',fontWeight:700}}>{c.converted_strict}</td>
                         <td style={{padding:'9px 8px'}}>
                           <div style={{display:'flex',alignItems:'center',gap:6}}>
                             <div style={{width:50,height:6,background:'var(--bg-hover)',borderRadius:3,overflow:'hidden'}}>
-                              <div style={{height:'100%',width:c.conversion_rate+'%',background:c.conversion_rate>10?'var(--green)':c.conversion_rate>3?'var(--yellow)':'var(--red)',borderRadius:3}}/>
+                              <div style={{height:'100%',width:c.conversion_rate_strict+'%',background:c.conversion_rate_strict>10?'var(--green)':c.conversion_rate_strict>3?'var(--yellow)':'var(--red)',borderRadius:3}}/>
                             </div>
-                            <span style={{color:'var(--text-dim)',fontSize:10.5}}>{c.conversion_rate}%</span>
+                            <span style={{color:'var(--text-dim)',fontSize:10.5}}>{c.conversion_rate_strict}%</span>
                           </div>
                         </td>
-                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{c.converted ? waFmtMoney(c.avg_order) : '—'}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{c.converted_strict ? waFmtMoney(c.avg_order_strict) : '—'}</td>
                         <td style={{padding:'9px 8px'}}>
                           <div style={{display:'flex',alignItems:'center',gap:8}}>
                             <div style={{width:60,height:6,background:'var(--bg-hover)',borderRadius:3,overflow:'hidden'}}>
-                              <div style={{height:'100%',width:(100*c.revenue/maxRevenue)+'%',background:'var(--indigo)',borderRadius:3}}/>
+                              <div style={{height:'100%',width:(100*c.revenue_strict/maxRevenue)+'%',background:'var(--indigo)',borderRadius:3}}/>
                             </div>
-                            <span style={{color:'var(--text)',fontWeight:700}}>{waFmtMoney(c.revenue)}</span>
+                            <div>
+                              <div style={{color:'var(--text)',fontWeight:700}}>{waFmtMoney(c.revenue_strict)}</div>
+                              <div style={{color:'var(--text-muted)',fontSize:9.5}}>loose: {waFmtMoney(c.revenue)}</div>
+                            </div>
                           </div>
                         </td>
                         <td style={{padding:'9px 8px'}}>
@@ -14460,7 +14466,7 @@
                           <div style={{fontSize:11,color:'var(--orange)',fontWeight:700}}>{c.discount_claimed ? waFmtMoney(c.discount_claimed) : '—'} <span style={{color:'var(--text-muted)',fontWeight:400}}>claimed</span></div>
                         </td>
                         <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{campaignData.pricing_configured ? waFmtMoney(c.spend) : '—'}</td>
-                        <td style={{padding:'9px 8px',fontWeight:700,color:c.roas==null?'var(--text-muted)':c.roas>=3?'var(--green)':c.roas>=1?'var(--yellow)':'var(--red)'}}>{c.roas!=null ? `${c.roas}x` : '—'}</td>
+                        <td style={{padding:'9px 8px',fontWeight:700,color:c.roas_strict==null?'var(--text-muted)':c.roas_strict>=3?'var(--green)':c.roas_strict>=1?'var(--yellow)':'var(--red)'}}>{c.roas_strict!=null ? `${c.roas_strict}x` : '—'}{c.roas!=null && <div style={{fontSize:9.5,fontWeight:400,color:'var(--text-muted)'}}>loose: {c.roas}x</div>}</td>
                         <td style={{padding:'9px 8px',color:'var(--text-muted)',fontSize:10.5}}>{waTimeAgo(c.last_sent_at)}</td>
                       </tr>
                     ))}
