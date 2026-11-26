@@ -32607,6 +32607,7 @@ const WA_CAMPAIGN_TEMPLATE_NAMES = [
   'diwali_soiree_recovery',
   'back_in_stock_v1',
   'weekend_bestsellers_carousel_v1', 'weekend_bestsellers_carousel_v2',
+  'black_friday_2026_carousel_v3',
 ];
 
 // Which discount code each campaign's own message actually promises, and
@@ -32903,6 +32904,54 @@ app.get('/admin/wa-marketing/campaigns', adminAuth, async (req, res) => {
     totals.roas_strict = (pricing.marketing_rate && totals.spend > 0) ? +(totals.revenue_strict / totals.spend).toFixed(2) : null;
 
     res.json({ days, campaigns, totals, pricing_configured: !!pricing.marketing_rate });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /admin/wa-marketing/audiences — same ads-manager-style breakdown as
+// /campaigns above, but grouped by the `audience` tag each send was logged
+// with (e.g. the Black Friday segment test: event_creates/repeat/prepaid_only/
+// abandoned_30d/abandoned_old/lapsed/regular) instead of by template name —
+// lets a single campaign's performance be compared across audience segments.
+// Rows with no audience tag (every send before this feature existed) are
+// grouped under "untagged" rather than silently dropped.
+app.get('/admin/wa-marketing/audiences', adminAuth, async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 30, 180);
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const pricing = await getWAPricingSettings();
+    const rows = await mdb.collection('wa_send_log').find(
+      { kind: 'template', name: { $in: WA_CAMPAIGN_TEMPLATE_NAMES }, sent_at: { $gte: cutoff } },
+      { projection: { name: 1, audience: 1, status: 1, delivery_status: 1, converted: 1, converted_amount: 1, converted_strict: 1, sent_at: 1 } }
+    ).toArray();
+
+    const byAudience = {};
+    for (const r of rows) {
+      const key = r.audience || 'untagged';
+      if (!byAudience[key]) byAudience[key] = { audience: key, sent: 0, delivered: 0, read: 0, converted: 0, revenue: 0, converted_strict: 0, revenue_strict: 0, billable_sent: 0, last_sent_at: r.sent_at };
+      const c = byAudience[key];
+      c.sent++;
+      if (['delivered', 'read'].includes(r.delivery_status)) { c.delivered++; c.billable_sent++; }
+      if (r.delivery_status === 'read') c.read++;
+      if (r.converted) { c.converted++; c.revenue += (r.converted_amount || 0); }
+      if (r.converted_strict) { c.converted_strict++; c.revenue_strict += (r.converted_amount || 0); }
+      if (r.sent_at > c.last_sent_at) c.last_sent_at = r.sent_at;
+    }
+
+    const audiences = Object.values(byAudience).map(c => {
+      const spend = c.billable_sent * (pricing.marketing_rate || 0);
+      return {
+        ...c,
+        delivered_rate: c.sent ? +(100 * c.delivered / c.sent).toFixed(1) : 0,
+        read_rate: c.sent ? +(100 * c.read / c.sent).toFixed(1) : 0,
+        conversion_rate: c.sent ? +(100 * c.converted / c.sent).toFixed(1) : 0,
+        conversion_rate_strict: c.sent ? +(100 * c.converted_strict / c.sent).toFixed(1) : 0,
+        avg_order_strict: c.converted_strict ? +(c.revenue_strict / c.converted_strict).toFixed(0) : 0,
+        spend: +spend.toFixed(2),
+        roas_strict: (pricing.marketing_rate && spend > 0) ? +(c.revenue_strict / spend).toFixed(2) : null,
+      };
+    }).sort((a, b) => b.revenue_strict - a.revenue_strict);
+
+    res.json({ days, audiences, pricing_configured: !!pricing.marketing_rate });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
