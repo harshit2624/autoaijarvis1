@@ -31075,6 +31075,61 @@ app.get('/admin/bf2026-broadcast/status', adminAuth, async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+async function runBF2026Resend() {
+  if (!mdb) return;
+  const statusDoc = await mdb.collection('bf2026_resend_status').findOne({ _id: 'main' });
+  if (!statusDoc || statusDoc.status !== 'pending') return;
+  const now = new Date();
+  const nowIst = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const targetStr = `${statusDoc.target_date}T${statusDoc.target_time_ist}:00`;
+  if (nowIst < new Date(targetStr)) return;
+
+  const claimed = await mdb.collection('bf2026_resend_status').findOneAndUpdate(
+    { _id: 'main', status: 'pending' },
+    { $set: { status: 'sending', started_at: now.toISOString() } }
+  );
+  if (!claimed) return;
+
+  const segDoc = await mdb.collection('bf2026_resend_segments').findOne({ _id: 'main' });
+  if (!segDoc) {
+    await mdb.collection('bf2026_resend_status').updateOne({ _id: 'main' }, { $set: { status: 'error', error: 'no segments found' } });
+    return;
+  }
+
+  console.log('📣 BF2026 resend starting —', segDoc.send_order.map(a => `${a}:${(segDoc.segments[a]||[]).length}`).join(', '));
+  let sent = 0, failed = 0;
+  for (const audience of segDoc.send_order) {
+    const phones = segDoc.segments[audience] || [];
+    for (const phone of phones) {
+      let wamid = null, ok = true, reason = null;
+      try {
+        wamid = await sendBF2026BroadcastOne(phone);
+      } catch (e) { ok = false; reason = e.message; }
+      await logWASend({ phone10: phone, wamid, kind: 'template', name: BF2026_TEMPLATE_NAME, sent: ok, reason, category: 'marketing', audience });
+      if (ok) sent++; else failed++;
+      await new Promise(r => setTimeout(r, 350));
+    }
+    console.log(`📣 BF2026 resend: finished ${audience} (${phones.length}) — running total sent=${sent} failed=${failed}`);
+  }
+  await mdb.collection('bf2026_resend_status').updateOne({ _id: 'main' }, { $set: { status: 'done', finished_at: new Date().toISOString(), sent, failed } });
+  console.log(`✅ BF2026 resend done — sent=${sent} failed=${failed}`);
+  waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nBLACK FRIDAY RESEND DONE\n────────────────\nSent: ${sent}\nFailed: ${failed}\n\`\`\``).catch(() => {});
+}
+setInterval(() => { runBF2026Resend().catch(e => console.error('runBF2026Resend error:', e.message)); }, 2 * 60 * 1000);
+setTimeout(() => { runBF2026Resend().catch(e => console.error('runBF2026Resend error:', e.message)); }, 15000);
+
+app.post('/admin/bf2026-resend/run-now', adminAuth, async (req, res) => {
+  try {
+    await mdb.collection('bf2026_resend_status').updateOne({ _id: 'main' }, { $set: { status: 'pending', target_date: '2000-01-01', target_time_ist: '00:00' } });
+    runBF2026Resend().catch(e => console.error('runBF2026Resend error:', e.message));
+    res.json({ ok: true, message: 'Resend triggered — check logs / wa-marketing dashboard for progress.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/admin/bf2026-resend/status', adminAuth, async (req, res) => {
+  try { res.json(await mdb.collection('bf2026_resend_status').findOne({ _id: 'main' })); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Sends the abandoned_cart_recovery template with a dynamic Buy Now button.
 // Returns { sent: false, reason } (never throws) so callers can fall back to
 // Baileys — this must never block or crash the existing abandoned-cart flow.
