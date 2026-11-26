@@ -14310,6 +14310,7 @@
     const [days, setDays] = React.useState(30);
     const [data, setData] = React.useState(null);
     const [campaignData, setCampaignData] = React.useState(null);
+    const [audienceData, setAudienceData] = React.useState(null);
     const [funnelData, setFunnelData] = React.useState(null);
     const [pricing, setPricing] = React.useState(null);
     const [pricingDraft, setPricingDraft] = React.useState({ marketing_rate: '', utility_rate: '' });
@@ -14331,11 +14332,13 @@
       Promise.all([
         fetch(`${API}/admin/wa-marketing/overview?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
         fetch(`${API}/admin/wa-marketing/campaigns?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
+        fetch(`${API}/admin/wa-marketing/audiences?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
         fetch(`${API}/admin/wa-marketing/campaign-funnel?days=${days}`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
         fetch(`${API}/admin/wa-marketing/pricing-settings`, { headers:{ Authorization:`Bearer ${token}` } }).then(r=>r.json()).catch(()=>null),
-      ]).then(([d,cd,fd,pd]) => {
+      ]).then(([d,cd,ad,fd,pd]) => {
         if (d && !d.error) setData(d);
         if (cd && !cd.error) setCampaignData(cd);
+        if (ad && !ad.error) setAudienceData(ad);
         if (fd && !fd.error) setFunnelData(fd);
         if (pd && !pd.error) { setPricing(pd); setPricingDraft({ marketing_rate: pd.marketing_rate || '', utility_rate: pd.utility_rate || '' }); }
       }).finally(()=>setLoading(false));
@@ -14471,6 +14474,57 @@
                       </tr>
                     ))}
                     {!campaignData.campaigns.length && <tr><td colSpan="12" style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}>No marketing sends in this range yet</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Audience breakdown — same campaign, sliced by who got it ──
+            (event attendees / repeat / prepaid-only / abandoned-checkout by
+            recency / lapsed / regular) instead of by template name, so a
+            single broadcast's performance can be compared segment-to-segment. */}
+        {audienceData && (
+          <div className="card" style={{marginBottom:20}}>
+            <div style={{padding:'16px 18px'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                <span style={{fontSize:15}}>🎯</span>
+                <h3 style={{margin:0,fontSize:14,fontWeight:700,color:'var(--text)'}}>Audience Breakdown</h3>
+              </div>
+              <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:14}}>Same sends as above, grouped by which audience segment they went to — compare which segment actually converts.</div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11.5}}>
+                  <thead>
+                    <tr style={{color:'var(--text-muted)',textAlign:'left',borderBottom:'1px solid var(--border)'}}>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Audience</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Sent</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Delivered</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Read</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Converted (attributed)</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Conv. Rate</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Revenue</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Spend</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>ROAS</th>
+                      <th style={{padding:'6px 8px',fontWeight:500}}>Last Sent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {audienceData.audiences.map((a,i) => (
+                      <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+                        <td style={{padding:'9px 8px',color:'var(--text)',fontWeight:600,textTransform:'capitalize'}}>{a.audience.replace(/_/g,' ')}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{a.sent}</td>
+                        <td style={{padding:'9px 8px',color:'var(--cyan)'}}>{a.delivered} <span style={{color:'var(--text-muted)',fontSize:10}}>({a.delivered_rate}%)</span></td>
+                        <td style={{padding:'9px 8px',color:'var(--green)'}}>{a.read} <span style={{color:'var(--text-muted)',fontSize:10}}>({a.read_rate}%)</span></td>
+                        <td style={{padding:'9px 8px',color:'var(--text)',fontWeight:700}}>{a.converted_strict}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{a.conversion_rate_strict}%</td>
+                        <td style={{padding:'9px 8px',color:'var(--text)',fontWeight:700}}>{waFmtMoney(a.revenue_strict)}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-dim)'}}>{audienceData.pricing_configured ? waFmtMoney(a.spend) : '—'}</td>
+                        <td style={{padding:'9px 8px',fontWeight:700,color:a.roas_strict==null?'var(--text-muted)':a.roas_strict>=3?'var(--green)':a.roas_strict>=1?'var(--yellow)':'var(--red)'}}>{a.roas_strict!=null ? `${a.roas_strict}x` : '—'}</td>
+                        <td style={{padding:'9px 8px',color:'var(--text-muted)',fontSize:10.5}}>{waTimeAgo(a.last_sent_at)}</td>
+                      </tr>
+                    ))}
+                    {!audienceData.audiences.length && <tr><td colSpan="10" style={{padding:24,textAlign:'center',color:'var(--text-muted)'}}>No audience-tagged sends in this range yet</td></tr>}
                   </tbody>
                 </table>
               </div>
