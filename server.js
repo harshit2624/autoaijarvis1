@@ -30961,7 +30961,7 @@ setInterval(refreshWATemplateCategories, 30 * 60 * 1000);
 // templates (from the cache above) and hardcoded 'service' for sessions —
 // the status-callback webhook can still correct it later if Meta reports a
 // different billed category for a specific message.
-async function logWASend({ phone10, wamid, kind, name, sent, reason, category = null }) {
+async function logWASend({ phone10, wamid, kind, name, sent, reason, category = null, audience = null }) {
   try {
     const recipient_type = await waClassifyRecipient(phone10);
     await mdb.collection('wa_send_log').insertOne({
@@ -30969,10 +30969,111 @@ async function logWASend({ phone10, wamid, kind, name, sent, reason, category = 
       kind, name, category,
       status: sent ? 'sent' : 'failed', reason: reason || null,
       billable: null, pricing_category: null,
+      audience: audience || undefined,
       sent_at: new Date().toISOString(),
     });
   } catch (e) { console.error('logWASend error:', e.message); }
 }
+
+// ── Black Friday 2026 audience-segmented broadcast ─────────────────────────
+// Runs ON THE SERVER (Render), not from a local machine/CLI session, so it
+// fires at the scheduled time regardless of whether anyone's laptop is on.
+// Segments were precomputed once (event/repeat/prepaid-only/abandoned-by-
+// recency/lapsed/regular, mutually exclusive) and stored in
+// bf2026_broadcast_segments — this just sends the approved carousel
+// template to each phone in send_order, tagging every wa_send_log row with
+// its audience so /admin/wa-marketing/audiences can report on it.
+// Idempotency: bf2026_broadcast_status.status flips pending -> sending ->
+// done, checked right before the send loop starts, so a Render restart
+// mid-run (or the 10-minute scheduler tick firing twice) can never
+// double-send the whole list.
+const BF2026_CARD_URLS = [
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-noframe-oxblood-leather-bomber-jacket_70177088-f18b-404a-9633-10985e5fc6fc.png",
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-noframe-sicos-nyc-001-core_12526c8f-6d58-40fb-bc2a-8e107cebd7e1.png",
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-noframe-frost-clasp-hoodie-black_1457079b-25fe-4f0e-abe0-79e60e6b13a0.png",
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-noframe-paradise-raglan-waffle_8a2db3e9-1309-4b6d-9ab8-25b1e40595c9.png",
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-noframe-3am-sweater_a3a1b630-729d-4ef1-b07e-beb91c5dae59.png",
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-noframe-outlaw-zipper-core-003_47bc1e1e-1ff1-4522-9e56-ec3129a9acf2.png",
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-noframe-record-baggy-sweatpants_d538e134-4566-4fd4-97b2-906353ac8923.png",
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-noframe-lost-saint-zipper-core-003_386898e9-da90-404b-a73f-bd0d91d95bdf.png",
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-noframe-ivory-frequency-shirt_fe4cc425-86e6-4b94-bb48-59f83dc9b3a3.png",
+  "https://cdn.shopify.com/s/files/1/0688/9209/8691/files/bf2026-card-viewall.png",
+];
+const BF2026_TEMPLATE_NAME = 'black_friday_2026_carousel_v3';
+
+async function sendBF2026BroadcastOne(phone10) {
+  const cards = BF2026_CARD_URLS.map((url, i) => ({
+    card_index: i,
+    components: [{ type: 'header', parameters: [{ type: 'image', image: { link: url } }] }],
+  }));
+  const res = await fetch(`${WA_CLOUD_API}/${WA_CLOUD_PHONE_ID}/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${WA_CLOUD_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp', to: `91${phone10}`, type: 'template',
+      template: { name: BF2026_TEMPLATE_NAME, language: { code: 'en' }, components: [{ type: 'carousel', cards }] },
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error?.message || `http_${res.status}`);
+  return data.messages?.[0]?.id || null;
+}
+
+async function runBF2026Broadcast() {
+  if (!mdb) return;
+  const statusDoc = await mdb.collection('bf2026_broadcast_status').findOne({ _id: 'main' });
+  if (!statusDoc || statusDoc.status !== 'pending') return; // already sending/done, or nothing scheduled
+  const now = new Date();
+  const nowIst = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const targetStr = `${statusDoc.target_date}T${statusDoc.target_time_ist}:00`;
+  if (nowIst < new Date(targetStr)) return; // not time yet
+
+  const claimed = await mdb.collection('bf2026_broadcast_status').findOneAndUpdate(
+    { _id: 'main', status: 'pending' },
+    { $set: { status: 'sending', started_at: now.toISOString() } }
+  );
+  if (!claimed) return; // another tick already claimed it — findOneAndUpdate's atomic filter means only one tick ever matches
+
+  const segDoc = await mdb.collection('bf2026_broadcast_segments').findOne({ _id: 'main' });
+  if (!segDoc) {
+    await mdb.collection('bf2026_broadcast_status').updateOne({ _id: 'main' }, { $set: { status: 'error', error: 'no segments found' } });
+    return;
+  }
+
+  console.log('📣 BF2026 broadcast starting —', segDoc.send_order.map(a => `${a}:${(segDoc.segments[a]||[]).length}`).join(', '));
+  let sent = 0, failed = 0;
+  for (const audience of segDoc.send_order) {
+    const phones = segDoc.segments[audience] || [];
+    for (const phone of phones) {
+      let wamid = null, ok = true, reason = null;
+      try {
+        wamid = await sendBF2026BroadcastOne(phone);
+      } catch (e) { ok = false; reason = e.message; }
+      await logWASend({ phone10: phone, wamid, kind: 'template', name: BF2026_TEMPLATE_NAME, sent: ok, reason, category: 'marketing', audience });
+      if (ok) sent++; else failed++;
+      await new Promise(r => setTimeout(r, 350));
+    }
+    console.log(`📣 BF2026 broadcast: finished ${audience} (${phones.length}) — running total sent=${sent} failed=${failed}`);
+  }
+  await mdb.collection('bf2026_broadcast_status').updateOne({ _id: 'main' }, { $set: { status: 'done', finished_at: new Date().toISOString(), sent, failed } });
+  console.log(`✅ BF2026 broadcast done — sent=${sent} failed=${failed}`);
+  waAdminAlert(`\`\`\`\n▪ C R O S C R O W ▪\nBLACK FRIDAY BROADCAST DONE\n────────────────\nSent: ${sent}\nFailed: ${failed}\n\`\`\``).catch(() => {});
+}
+// Checked every 2 minutes — cheap no-op unless status is 'pending' AND past target time.
+setInterval(() => { runBF2026Broadcast().catch(e => console.error('runBF2026Broadcast error:', e.message)); }, 2 * 60 * 1000);
+setTimeout(() => { runBF2026Broadcast().catch(e => console.error('runBF2026Broadcast error:', e.message)); }, 15000);
+
+app.post('/admin/bf2026-broadcast/run-now', adminAuth, async (req, res) => {
+  try {
+    await mdb.collection('bf2026_broadcast_status').updateOne({ _id: 'main' }, { $set: { status: 'pending', target_date: '2000-01-01', target_time_ist: '00:00' } });
+    runBF2026Broadcast().catch(e => console.error('runBF2026Broadcast error:', e.message));
+    res.json({ ok: true, message: 'Broadcast triggered — check logs / wa-marketing dashboard for progress.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/admin/bf2026-broadcast/status', adminAuth, async (req, res) => {
+  try { res.json(await mdb.collection('bf2026_broadcast_status').findOne({ _id: 'main' })); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // Sends the abandoned_cart_recovery template with a dynamic Buy Now button.
 // Returns { sent: false, reason } (never throws) so callers can fall back to
