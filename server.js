@@ -28754,7 +28754,7 @@ app.post('/admin/bf-outage-resend', adminAuth, async (req, res) => {
             } }
           }
         }`, { cursor, since: `created_at:>=${since}` });
-      const edges = data?.data?.orders?.edges || [];
+      const edges = data?.orders?.edges || [];
       for (const { node } of edges) {
         const phones = [node.phone, node.customer?.phone, node.shippingAddress?.phone, node.billingAddress?.phone]
           .filter(Boolean).map(p => String(p).replace(/\D/g, '').slice(-10));
@@ -28762,8 +28762,8 @@ app.post('/admin/bf-outage-resend', adminAuth, async (req, res) => {
           if (p.length === 10 && !phoneToOrder.has(p)) phoneToOrder.set(p, node.id.split('/').pop());
         }
       }
-      if (!data?.data?.orders?.pageInfo?.hasNextPage) break;
-      cursor = data.data.orders.pageInfo.endCursor;
+      if (!data?.orders?.pageInfo?.hasNextPage) break;
+      cursor = data.orders.pageInfo.endCursor;
     }
   } catch (e) { console.error('bf-outage-resend order scan error:', e.message); }
 
