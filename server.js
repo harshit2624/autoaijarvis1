@@ -28731,9 +28731,7 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
 // would have used — never improvises new copy. Each call is still gated by
 // its own real dedup (order_meta.wa_notif_sent.<stage>), so this is safe to
 // re-run if some fail again.
-app.post('/admin/bf-outage-resend', adminAuth, async (req, res) => {
-  const items = req.body?.items || [];
-
+async function runBfOutageResend(items) {
   // Shopify's order search query doesn't support a `phone` field — scan
   // recent orders directly instead (same approach used for the BF2026
   // audience build) and build a phone -> latest order map once.
@@ -28796,7 +28794,31 @@ app.post('/admin/bf-outage-resend', adminAuth, async (req, res) => {
     }
     await new Promise(r => setTimeout(r, 400));
   }
-  res.json({ ok: true, results });
+  return results;
+}
+
+app.post('/admin/bf-outage-resend', adminAuth, async (req, res) => {
+  const items = req.body?.items || [];
+  await mdb.collection('bf_outage_resend_status').replaceOne(
+    { _id: 'main' },
+    { _id: 'main', status: 'running', started_at: new Date().toISOString(), total: items.length }
+  , { upsert: true });
+  res.json({ ok: true, message: 'Resend started in background — poll GET /admin/bf-outage-resend/status.' });
+  runBfOutageResend(items).then(async (results) => {
+    await mdb.collection('bf_outage_resend_status').updateOne(
+      { _id: 'main' },
+      { $set: { status: 'done', finished_at: new Date().toISOString(), results } }
+    );
+  }).catch(async (e) => {
+    await mdb.collection('bf_outage_resend_status').updateOne(
+      { _id: 'main' },
+      { $set: { status: 'error', error: e.message } }
+    );
+  });
+});
+app.get('/admin/bf-outage-resend/status', adminAuth, async (req, res) => {
+  try { res.json(await mdb.collection('bf_outage_resend_status').findOne({ _id: 'main' })); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/admin/wa-confirm-test-send', adminAuth, async (req, res) => {
