@@ -31648,15 +31648,20 @@ async function waCloudSendSession(jid, content) {
     if (!res.ok || data.error) {
       console.error('❌ WA Cloud session send failed:', JSON.stringify(data.error || data));
       const reason = data.error?.message || `http_${res.status}`;
-      logWASend({ phone10: digits, kind: 'session', name: sessionKind, sent: false, reason, category: 'service' }).catch(() => {});
+      await logWASend({ phone10: digits, kind: 'session', name: sessionKind, sent: false, reason, category: 'service' }).catch(() => {});
       return { sent: false, reason };
     }
     const wamid = data.messages?.[0]?.id;
-    logWASend({ phone10: digits, wamid, kind: 'session', name: sessionKind, sent: true, category: 'service' }).catch(() => {});
+    // Awaited deliberately — callers (e.g. adminSendHighRiskAdvanceAsk) tag
+    // this row with retry_context by wamid right after this returns. That
+    // update used to race the fire-and-forget write here and silently find
+    // no row to update, which meant the async re-engagement/undeliverable
+    // retry could never fire — confirmed live on orders #4346/#4354.
+    await logWASend({ phone10: digits, wamid, kind: 'session', name: sessionKind, sent: true, category: 'service' }).catch(() => {});
     return { sent: true, messageId: wamid };
   } catch (e) {
     console.error('❌ WA Cloud session send error:', e.message);
-    logWASend({ phone10: digits, kind: 'session', name: 'text', sent: false, reason: e.message, category: 'service' }).catch(() => {});
+    await logWASend({ phone10: digits, kind: 'session', name: 'text', sent: false, reason: e.message, category: 'service' }).catch(() => {});
     return { sent: false, reason: e.message };
   }
 }
@@ -32055,7 +32060,11 @@ async function adminSendHighRiskAdvanceAsk(order, phoneOverride) {
 // that wamid carries a retry_context, fire the matching Meta-approved
 // template instead. Called from the WA Cloud status webhook.
 async function retryViaTemplateIfReengagement(wamid, failReason) {
-  if (!/re-?engagement/i.test(failReason || '')) return;
+  // Covers both async-failure shapes seen on high-risk-ask session sends —
+  // "Re-engagement message" (24h window closed) and "Message undeliverable"
+  // (confirmed on order #4346) — both are retried the same way: fall back
+  // to the Meta-approved template, which doesn't need an open session.
+  if (!/re-?engagement|undeliverable/i.test(failReason || '')) return;
   const row = await mdb.collection('wa_send_log').findOne({ wamid });
   const ctx = row?.retry_context;
   if (!ctx || ctx.retried) return;
