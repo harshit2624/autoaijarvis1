@@ -28733,19 +28733,46 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
 // re-run if some fail again.
 app.post('/admin/bf-outage-resend', adminAuth, async (req, res) => {
   const items = req.body?.items || [];
+
+  // Shopify's order search query doesn't support a `phone` field — scan
+  // recent orders directly instead (same approach used for the BF2026
+  // audience build) and build a phone -> latest order map once.
+  const phoneToOrder = new Map();
+  try {
+    let cursor = null;
+    const since = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    for (let page = 0; page < 40; page++) {
+      const data = await shopifyGraphQL(`
+        query($cursor: String, $since: String!) {
+          orders(first: 100, after: $cursor, query: $since, sortKey: CREATED_AT, reverse: true) {
+            pageInfo { hasNextPage endCursor }
+            edges { node {
+              id name phone createdAt
+              customer { phone }
+              shippingAddress { phone }
+              billingAddress { phone }
+            } }
+          }
+        }`, { cursor, since: `created_at:>=${since}` });
+      const edges = data?.data?.orders?.edges || [];
+      for (const { node } of edges) {
+        const phones = [node.phone, node.customer?.phone, node.shippingAddress?.phone, node.billingAddress?.phone]
+          .filter(Boolean).map(p => String(p).replace(/\D/g, '').slice(-10));
+        for (const p of phones) {
+          if (p.length === 10 && !phoneToOrder.has(p)) phoneToOrder.set(p, node.id.split('/').pop());
+        }
+      }
+      if (!data?.data?.orders?.pageInfo?.hasNextPage) break;
+      cursor = data.data.orders.pageInfo.endCursor;
+    }
+  } catch (e) { console.error('bf-outage-resend order scan error:', e.message); }
+
   const results = [];
   for (const { phone, template } of items) {
     const digits = String(phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
     try {
-      const gqlRes = await shopifyGraphQL(`
-        query($q: String!) {
-          orders(first: 1, query: $q, sortKey: CREATED_AT, reverse: true) {
-            edges { node { id name } }
-          }
-        }`, { q: `phone:+91${digits} OR phone:${digits}` }).catch(() => null);
-      const gid = gqlRes?.data?.orders?.edges?.[0]?.node?.id;
-      if (!gid) { results.push({ phone, template, ok: false, reason: 'order not found by phone' }); continue; }
-      const numericId = gid.split('/').pop();
+      const numericId = phoneToOrder.get(digits);
+      if (!numericId) { results.push({ phone, template, ok: false, reason: 'order not found by phone (last 10 days)' }); continue; }
       const orderFull = await shopifyREST(`/orders/${numericId}.json?fields=id,name,line_items,total_price,financial_status,shipping_address,billing_address,phone`);
       const order = orderFull?.order;
       if (!order) { results.push({ phone, template, ok: false, reason: 'order fetch failed' }); continue; }
