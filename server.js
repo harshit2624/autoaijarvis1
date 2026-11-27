@@ -28724,6 +28724,54 @@ app.get('/admin/whatsapp-status', adminAuth, async (req, res) => {
 // Shopify order — exercises the same confirmationHeaderImage() collage
 // logic as the live path. Defined after adminResendOrderConfirmation so
 // placing it earlier in the file is fine (function declaration hoisting).
+// One-off: resend utility WA messages that failed during the 2026-11-25→27
+// "Business eligibility payment issue" Meta billing outage. Takes a list of
+// {phone, template} and looks up each order fresh from Shopify by phone,
+// then dispatches through the same production functions a working cron
+// would have used — never improvises new copy. Each call is still gated by
+// its own real dedup (order_meta.wa_notif_sent.<stage>), so this is safe to
+// re-run if some fail again.
+app.post('/admin/bf-outage-resend', adminAuth, async (req, res) => {
+  const items = req.body?.items || [];
+  const results = [];
+  for (const { phone, template } of items) {
+    const digits = String(phone || '').replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    try {
+      const gqlRes = await shopifyGraphQL(`
+        query($q: String!) {
+          orders(first: 1, query: $q, sortKey: CREATED_AT, reverse: true) {
+            edges { node { id name } }
+          }
+        }`, { q: `phone:+91${digits} OR phone:${digits}` }).catch(() => null);
+      const gid = gqlRes?.data?.orders?.edges?.[0]?.node?.id;
+      if (!gid) { results.push({ phone, template, ok: false, reason: 'order not found by phone' }); continue; }
+      const numericId = gid.split('/').pop();
+      const orderFull = await shopifyREST(`/orders/${numericId}.json?fields=id,name,line_items,total_price,financial_status,shipping_address,billing_address,phone`);
+      const order = orderFull?.order;
+      if (!order) { results.push({ phone, template, ok: false, reason: 'order fetch failed' }); continue; }
+
+      if (template === 'order_confirmed_cod_advance_v3' || template === 'order_confirmed_prepaid_v2') {
+        const r = await adminResendOrderConfirmation(order, digits);
+        results.push({ phone, template, ok: true, order_name: order.name, kind: r.kind });
+      } else if (['shipment_pickup_v3', 'shipment_transit_v3', 'shipment_out_for_delivery_v3', 'shipment_delivered_v2'].includes(template)) {
+        const stageMap = { shipment_pickup_v3: 'pickup', shipment_transit_v3: 'transit', shipment_out_for_delivery_v3: 'ofd', shipment_delivered_v2: 'delivered' };
+        const stage = stageMap[template];
+        const customerName = order.shipping_address ? `${order.shipping_address.first_name || ''} ${order.shipping_address.last_name || ''}`.trim() : '';
+        const codAmount = order.financial_status === 'pending' ? Math.round(parseFloat(order.total_price || 0)) : 0;
+        const itemName = (order.line_items || []).map(li => li.title).join(', ');
+        await sendShipmentWANotif(order.id, stage, { orderName: order.name, customerName, customerPhone: digits, codAmount, itemName });
+        results.push({ phone, template, ok: true, order_name: order.name, stage });
+      } else {
+        results.push({ phone, template, ok: false, reason: 'unsupported template for resend' });
+      }
+    } catch (e) {
+      results.push({ phone, template, ok: false, reason: e.message });
+    }
+    await new Promise(r => setTimeout(r, 400));
+  }
+  res.json({ ok: true, results });
+});
+
 app.post('/admin/wa-confirm-test-send', adminAuth, async (req, res) => {
   try {
     const { phone, order_name } = req.body || {};
